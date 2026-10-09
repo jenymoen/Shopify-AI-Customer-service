@@ -12,6 +12,11 @@ RUN npm ci
 
 COPY . .
 
+# react-router.config.ts bakes the app host into allowedActionOrigins at build time
+# (React Router's CSRF check). Render's runtime env vars are not available during the build.
+ARG SHOPIFY_APP_URL=https://shopify-ai-customer-service.onrender.com
+ENV SHOPIFY_APP_URL=$SHOPIFY_APP_URL
+
 RUN npm run build && npm prune --omit=dev && npm cache clean --force
 
 ENV NODE_ENV=production
