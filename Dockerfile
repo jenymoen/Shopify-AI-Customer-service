@@ -16,4 +16,5 @@ RUN npm run build && npm prune --omit=dev && npm cache clean --force
 
 ENV NODE_ENV=production
 
-CMD ["npm", "run", "docker-start"]
+# Neon: the direct connection is the pooled one without "-pooler". Derive DIRECT_URL if it isn't set.
+CMD ["sh", "-c", "export DIRECT_URL=\"${DIRECT_URL:-$(echo \"$DATABASE_URL\" | sed 's/-pooler//')}\" && npm run docker-start"]

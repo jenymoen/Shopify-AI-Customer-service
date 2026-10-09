@@ -2,7 +2,7 @@
 
 client_id = "27d451d8bc10e529417b9fb0284f3384"
 name = "Avento Customer Service"
-application_url = "https://shopify.dev/apps/default-app-home"
+application_url = "https://shopify-ai-customer-service.onrender.com"
 embedded = true
 
 [access_scopes]
@@ -10,7 +10,11 @@ embedded = true
 scopes = "read_customers,read_orders,read_products"
 
 [auth]
-redirect_urls = [ "https://shopify.dev/apps/default-app-home/api/auth" ]
+redirect_urls = [
+  "https://shopify-ai-customer-service.onrender.com/auth/callback",
+  "https://shopify-ai-customer-service.onrender.com/auth/shopify/callback",
+  "https://shopify-ai-customer-service.onrender.com/api/auth/callback"
+]
 
 [webhooks]
 api_version = "2026-10"
@@ -25,5 +29,5 @@ api_version = "2026-10"
 
 [build]
 include_config_on_deploy = true
-automatically_update_urls_on_dev = true
+automatically_update_urls_on_dev = false
 
