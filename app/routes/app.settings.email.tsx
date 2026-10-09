@@ -16,12 +16,14 @@ async function requireShopSettingsAccess(request: Request) {
   });
 
   if (!shop) {
+    console.warn(`[email-settings] no Shop row for ${session.shop}`);
     throw new Response("Shop not found", { status: 404 });
   }
 
   const email = session.onlineAccessInfo?.associated_user?.email?.trim().toLowerCase();
   const user = await resolveShopUser({ shopId: shop.id, email });
   if (!user) {
+    console.warn(`[email-settings] no member user for shop ${shop.domain} (session email: ${email ?? "none"})`);
     throw new Response("Access denied", { status: 403 });
   }
 
@@ -32,6 +34,7 @@ async function requireShopSettingsAccess(request: Request) {
   });
 
   if (!canWriteShop) {
+    console.warn(`[email-settings] user ${user.id} lacks SHOPS_WRITE for shop ${shop.domain}`);
     throw new Response("Access denied", { status: 403 });
   }
 

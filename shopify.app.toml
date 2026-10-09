@@ -28,6 +28,5 @@ api_version = "2026-10"
   topics = [ "app/scopes_update" ]
 
 [build]
-include_config_on_deploy = true
 automatically_update_urls_on_dev = false
 
