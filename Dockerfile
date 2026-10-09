@@ -5,14 +5,15 @@ EXPOSE 3000
 
 WORKDIR /app
 
-ENV NODE_ENV=production
-
 COPY package.json package-lock.json* ./
 
-RUN npm ci --omit=dev && npm cache clean --force
+# Install dev dependencies too: the build needs vite. They are pruned after the build.
+RUN npm ci
 
 COPY . .
 
-RUN npm run build
+RUN npm run build && npm prune --omit=dev && npm cache clean --force
+
+ENV NODE_ENV=production
 
 CMD ["npm", "run", "docker-start"]
