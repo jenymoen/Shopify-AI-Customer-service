@@ -1,0 +1,48 @@
+services:
+  - type: web
+    name: avento-customer-service
+    runtime: docker
+    plan: starter
+    region: frankfurt
+    healthCheckPath: /auth/login
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: SCOPES
+        value: read_customers,read_orders,read_products
+      # Full https URL, e.g. https://avento-customer-service.onrender.com
+      - key: SHOPIFY_APP_URL
+        sync: false
+      - key: SHOPIFY_API_KEY
+        sync: false
+      - key: SHOPIFY_API_SECRET
+        sync: false
+      # Neon pooled connection string (host contains "-pooler")
+      - key: DATABASE_URL
+        sync: false
+      # Neon direct connection string (no "-pooler"), used by prisma migrate
+      - key: DIRECT_URL
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: TOKEN_HASH_SECRET
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: EMAIL_API_KEY
+        sync: false
+      - key: EMAIL_INBOUND_WEBHOOK_SECRET
+        sync: false
+      - key: EMAIL_INBOUND_ADDRESS
+        sync: false
+      - key: EMAIL_FROM_ADDRESS
+        sync: false
+      - key: LOG_LEVEL
+        value: info

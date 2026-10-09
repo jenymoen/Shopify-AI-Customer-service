@@ -1,0 +1,680 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [vector]
+}
+
+enum RoleName {
+  OWNER
+  ADMIN
+  AGENT
+  EXTERNAL_AGENT
+  VIEWER
+}
+
+enum PermissionName {
+  SHOPS_READ
+  SHOPS_WRITE
+  USERS_READ
+  USERS_WRITE
+  TICKETS_READ
+  TICKETS_WRITE
+  TICKETS_ASSIGN
+  TICKETS_TRANSFER
+  TICKETS_INTERNAL_NOTE
+  CUSTOMERS_READ
+  CUSTOMERS_WRITE
+  KNOWLEDGE_READ
+  KNOWLEDGE_WRITE
+  AI_GENERATE
+  AI_VALIDATE
+  ACTIONS_READ
+  ACTIONS_WRITE
+  ACTIONS_APPROVE
+}
+
+enum TicketStatus {
+  NEW
+  OPEN
+  WAITING_FOR_CUSTOMER
+  WAITING_FOR_AGENT
+  RESOLVED
+  CLOSED
+}
+
+enum TicketSource {
+  EMAIL
+  STOREFRONT
+  MANUAL
+  API
+}
+
+enum SenderType {
+  CUSTOMER
+  AGENT
+  AI
+  SYSTEM
+}
+
+enum AIInstructionType {
+  GENERAL
+  TONE
+  RETURNS
+  SHIPPING
+  COMPLAINTS
+  PRODUCTS
+  ESCALATION
+  PROHIBITED_BEHAVIOR
+  CUSTOM
+}
+
+enum AIExecutionDecision {
+  AUTO_SEND
+  HUMAN_REVIEW
+  ESCALATE
+  NO_RESPONSE
+}
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+}
+
+model Shop {
+  id                 String               @id @default(cuid())
+  name               String
+  domain             String               @unique
+  currency           String?              @default("NOK")
+  timezone           String?              @default("Europe/Oslo")
+  status             String               @default("ACTIVE")
+  // Customer-facing support address (e.g. support@liltracker.no). Inbound email
+  // forwarded to Postmark is routed to the shop whose supportEmail is a recipient.
+  supportEmail       String?              @unique
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  installations      ShopifyInstallation[]
+  memberships        ShopMembership[]
+  roles              Role[]
+  permissions        Permission[]
+  customers          Customer[]
+  tickets            Ticket[]
+  knowledgeDocuments KnowledgeDocument[]
+  aiInstructions     AIInstruction[]
+  auditEvents        AuditEvent[]
+  teams              Team[]
+  invitations        Invitation[]
+  notifications      Notification[]
+  knowledgeGaps      KnowledgeGap[]
+  aiFeedbacks        AIFeedback[]
+  aiSetting          AISetting?
+  automationRules    AutomationRule[]
+  incidents          Incident[]
+  actionPolicies     ActionPolicy[]
+  actionExecutions   ActionExecution[]
+
+  @@index([status])
+}
+
+model ShopifyInstallation {
+  id                    String    @id @default(cuid())
+  shopId                String    @unique
+  shop                  Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopifyShopDomain     String
+  shopifyStoreId        String?
+  accessTokenEncrypted  String
+  scopes                String[]  @default([])
+  installedAt           DateTime  @default(now())
+  uninstalledAt         DateTime?
+  lastSyncedAt          DateTime?
+  webhookSubscriptions  Json?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([shopifyShopDomain])
+}
+
+model User {
+  id                 String           @id @default(cuid())
+  email              String           @unique
+  name               String?
+  avatarUrl          String?
+  isActive           Boolean          @default(true)
+  lastLoginAt        DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  memberships        ShopMembership[]
+  assignedTickets    Ticket[]         @relation("AssignedTickets")
+  invitedBy          Invitation[]     @relation("InvitedByUser")
+  createdAuditEvents AuditEvent[]     @relation("AuditActor")
+  createdNotes       InternalNote[]   @relation("NoteAuthor")
+  createdMessages    TicketMessage[]  @relation("MessageSender")
+  followers          TicketFollower[]
+  assignmentHistory  AssignmentHistory[] @relation("AssignmentActor")
+  teamMemberships    TeamMembership[]
+  notifications      Notification[]
+  invitedCollaborators TicketCollaborator[] @relation("InvitedCollaborators")
+  aiFeedbacks        AIFeedback[]
+
+  @@index([email])
+}
+
+model Role {
+  id          String            @id @default(cuid())
+  shopId      String
+  shop        Shop              @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  name        RoleName
+  description String?
+  permissions RolePermission[]
+  memberships ShopMembership[]
+
+  @@unique([shopId, name])
+}
+
+model Permission {
+  id          String            @id @default(cuid())
+  shopId      String
+  shop        Shop              @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  name        PermissionName
+  description String?
+  roles       RolePermission[]
+
+  @@unique([shopId, name])
+}
+
+model RolePermission {
+  id           String      @id @default(cuid())
+  roleId       String
+  permissionId String
+  role         Role        @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission  @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+}
+
+model ShopMembership {
+  id          String    @id @default(cuid())
+  shopId      String
+  userId      String
+  roleId      String
+  status      String    @default("ACTIVE")
+  expiresAt   DateTime?
+  invitedAt   DateTime  @default(now())
+  joinedAt    DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  shop        Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        Role      @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, userId])
+  @@index([shopId, status])
+}
+
+model Team {
+  id          String          @id @default(cuid())
+  shopId      String
+  shop        Shop            @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  members     TeamMembership[]
+  tickets     Ticket[]
+
+  @@unique([shopId, name])
+}
+
+model TeamMembership {
+  id        String   @id @default(cuid())
+  teamId    String
+  userId    String
+  role      String   @default("MEMBER")
+  createdAt DateTime @default(now())
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+}
+
+model Customer {
+  id                    String    @id @default(cuid())
+  shopId                String
+  shop                  Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopifyCustomerId     String?
+  firstName             String?
+  lastName              String?
+  email                 String?
+  phone                 String?
+  language              String?   @default("en")
+  tags                  String[]  @default([])
+  notes                 String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  tickets               Ticket[]
+
+  @@index([shopId, email])
+  @@index([shopId, shopifyCustomerId])
+}
+
+model Ticket {
+  id               String          @id @default(cuid())
+  shopId           String
+  customerId       String?
+  customer         Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  shop             Shop            @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  ticketNumber     String          @unique
+  subject          String
+  status           TicketStatus    @default(NEW)
+  source           TicketSource    @default(EMAIL)
+  priority         String          @default("NORMAL")
+  category         String?
+  language         String?         @default("en")
+  aiStatus         String?         @default("PENDING")
+  slaStatus        String?         @default("ON_TIME")
+  assigneeId       String?
+  assignee         User?           @relation("AssignedTickets", fields: [assigneeId], references: [id], onDelete: SetNull)
+  teamId           String?
+  team             Team?           @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  lastMessageAt    DateTime?
+  firstResponseAt  DateTime?
+  resolvedAt       DateTime?
+  closedAt         DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  messages         TicketMessage[]
+  followers        TicketFollower[]
+  internalNotes    InternalNote[]
+  assignmentHistory AssignmentHistory[]
+  attachments      Attachment[]
+  aiExecutions     AIExecution[]
+  auditEvents      AuditEvent[]
+  notifications    Notification[]
+  collaborators    TicketCollaborator[]
+  incidentLinks    IncidentTicket[]
+  actionExecutions ActionExecution[]
+
+  @@index([shopId, status])
+  @@index([shopId, assigneeId])
+  @@index([shopId, createdAt])
+}
+
+model TicketMessage {
+  id            String      @id @default(cuid())
+  ticketId      String
+  ticket        Ticket      @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  senderType    SenderType
+  senderUserId  String?
+  senderUser    User?       @relation("MessageSender", fields: [senderUserId], references: [id], onDelete: SetNull)
+  body          String
+  bodyHtml      String?
+  messageId     String?
+  inReplyTo     String?
+  references    String?
+  isIncoming    Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+  attachments   Attachment[]
+
+  @@index([ticketId, createdAt])
+  @@index([messageId])
+}
+
+model TicketFollower {
+  id        String      @id @default(cuid())
+  ticketId  String
+  userId    String
+  ticket    Ticket      @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([ticketId, userId])
+}
+
+model InternalNote {
+  id        String   @id @default(cuid())
+  ticketId  String
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorId  String?
+  author    User?    @relation("NoteAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  body      String
+  isVisibleToCustomer Boolean @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([ticketId, createdAt])
+}
+
+model AssignmentHistory {
+  id              String   @id @default(cuid())
+  ticketId        String
+  ticket          Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actorUserId     String?
+  actorUser       User?    @relation("AssignmentActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  fromUserId      String?
+  toUserId        String?
+  reason          String?
+  createdAt       DateTime @default(now())
+
+  @@index([ticketId, createdAt])
+}
+
+model Attachment {
+  id          String        @id @default(cuid())
+  ticketId    String?
+  ticket      Ticket?       @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  messageId   String?
+  message     TicketMessage? @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  filename    String
+  contentType String
+  storageKey  String
+  sizeBytes   Int?
+  createdAt   DateTime      @default(now())
+
+  @@index([ticketId])
+  @@index([messageId])
+}
+
+model AIInstruction {
+  id          String           @id @default(cuid())
+  shopId      String
+  shop        Shop             @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  name        String
+  type        AIInstructionType
+  content     String
+  conditions  Json?
+  isActive    Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@unique([shopId, name])
+  @@index([shopId, type, isActive])
+}
+
+model KnowledgeDocument {
+  id              String          @id @default(cuid())
+  shopId          String
+  shop            Shop            @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  title           String
+  sourceType      String          @default("MANUAL")
+  sourceUrl       String?
+  content         String
+  status          String          @default("DRAFT")
+  authorName      String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  chunks          KnowledgeChunk[]
+
+  @@index([shopId, status])
+}
+
+model KnowledgeChunk {
+  id             String            @id @default(cuid())
+  shopId         String
+  documentId     String
+  document       KnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  chunkIndex     Int
+  content        String
+  embedding      Unsupported("vector")
+  metadata       Json?
+  createdAt      DateTime          @default(now())
+
+  @@index([shopId])
+  @@index([documentId, chunkIndex])
+}
+
+model AIExecution {
+  id          String               @id @default(cuid())
+  shopId      String
+  ticketId    String?
+  ticket      Ticket?              @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  messageId   String?
+  model       String
+  decision    AIExecutionDecision?
+  confidence  Float?
+  latencyMs   Int?
+  costEstimate Decimal?            @db.Decimal(10, 6)
+  prompt      Json?
+  result      Json?
+  status      String              @default("COMPLETED")
+  createdAt   DateTime            @default(now())
+  feedbacks   AIFeedback[]
+
+  @@index([shopId, createdAt])
+  @@index([ticketId, createdAt])
+}
+
+model AuditEvent {
+  id          String   @id @default(cuid())
+  shopId      String
+  shop        Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  actorUserId String?
+  actorUser   User?    @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  entityType  String
+  entityId    String?
+  eventType   String
+  details     Json?
+  createdAt   DateTime @default(now())
+  ticketId    String?
+  ticket      Ticket?  @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+
+  @@index([shopId, createdAt])
+  @@index([ticketId, createdAt])
+}
+
+model Invitation {
+  id            String    @id @default(cuid())
+  shopId        String
+  shop          Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  email         String
+  name          String?
+  roleId        String?
+  invitedByUserId String?
+  invitedByUser User?     @relation("InvitedByUser", fields: [invitedByUserId], references: [id], onDelete: SetNull)
+  expiresAt     DateTime?
+  status        String    @default("PENDING")
+  tokenHash     String?
+  createdAt     DateTime  @default(now())
+  usedAt        DateTime?
+
+  @@index([shopId, email])
+  @@index([status])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  shopId    String
+  shop      Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ticketId  String?
+  ticket    Ticket?  @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  message   String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([shopId, userId, isRead])
+}
+
+model TicketCollaborator {
+  id                  String    @id @default(cuid())
+  ticketId            String
+  ticket              Ticket    @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  email               String
+  name                String?
+  invitedByUserId     String?
+  invitedByUser       User?     @relation("InvitedCollaborators", fields: [invitedByUserId], references: [id], onDelete: SetNull)
+  canReplyToCustomer Boolean   @default(false)
+  expiresAt           DateTime?
+  tokenHash           String?
+  createdAt           DateTime  @default(now())
+
+  @@index([ticketId, email])
+}
+
+model KnowledgeGap {
+  id                    String    @id @default(cuid())
+  shopId                String
+  shop                  Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  category              String
+  querySummary          String
+  failureReason         String
+  suggestedArticleTitle String?
+  suggestedContent      String?
+  status                String    @default("OPEN")
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([shopId, status])
+}
+
+model AIFeedback {
+  id            String      @id @default(cuid())
+  shopId        String
+  shop          Shop        @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  aiExecutionId String
+  aiExecution   AIExecution @relation(fields: [aiExecutionId], references: [id], onDelete: Cascade)
+  userId        String?
+  user          User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  rating        String
+  comment       String?
+  finalText     String?
+  editDistance  Int?
+  createdAt     DateTime    @default(now())
+
+  @@index([shopId, rating])
+}
+
+model AISetting {
+  id                     String   @id @default(cuid())
+  shopId                 String   @unique
+  shop                   Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  autoSendEnabled        Boolean  @default(false)
+  minConfidenceThreshold Float    @default(0.85)
+  allowedCategories      String[] @default([])
+  updatedAt              DateTime @updatedAt
+}
+
+model AutomationRule {
+  id          String   @id @default(cuid())
+  shopId      String
+  shop        Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  name        String
+  trigger     String
+  conditions  Json
+  actions     Json
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([shopId, trigger, isActive])
+}
+
+model Incident {
+  id           String           @id @default(cuid())
+  shopId       String
+  shop         Shop             @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  title        String
+  description  String?
+  keywords     String[]         @default([])
+  status       String           @default("INVESTIGATING")
+  resolvedAt   DateTime?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  tickets      IncidentTicket[]
+
+  @@index([shopId, status])
+}
+
+model IncidentTicket {
+  id         String   @id @default(cuid())
+  incidentId String
+  incident   Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  ticketId   String
+  ticket     Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([incidentId, ticketId])
+}
+
+enum ActionCategory {
+  READ
+  WRITE
+}
+
+enum ActionStatus {
+  PROPOSED
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  EXECUTING
+  SUCCEEDED
+  FAILED
+}
+
+model ActionPolicy {
+  id               String   @id @default(cuid())
+  shopId           String
+  shop             Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  actionType       String
+  isEnabled        Boolean  @default(true)
+  requiresApproval Boolean  @default(true)
+  autopilotEnabled Boolean  @default(false)
+  config           Json?
+  updatedAt        DateTime @updatedAt
+
+  @@unique([shopId, actionType])
+}
+
+model ActionExecution {
+  id                       String         @id @default(cuid())
+  shopId                   String
+  shop                     Shop           @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  ticketId                 String?
+  ticket                   Ticket?        @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  actionType               String
+  category                 ActionCategory
+  status                   ActionStatus   @default(PROPOSED)
+  idempotencyKey           String
+  input                    Json
+  guardrailResults         Json?
+  result                   Json?
+  errorMessage             String?
+  requestedByUserId        String?
+  requestedByAiExecutionId String?
+  approvedByUserId         String?
+  approvedAt               DateTime?
+  rejectedByUserId         String?
+  rejectedAt               DateTime?
+  executedAt               DateTime?
+  createdAt                DateTime       @default(now())
+  updatedAt                DateTime       @updatedAt
+
+  @@unique([shopId, idempotencyKey])
+  @@index([shopId, status])
+  @@index([ticketId, createdAt])
+}
+
+
