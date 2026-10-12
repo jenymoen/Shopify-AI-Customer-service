@@ -23,6 +23,20 @@ export async function parseUrlContent(url: string): Promise<string> {
   }
 }
 
+/** Shopify reports most failures (missing scopes, bad fields) as GraphQL errors on an HTTP 200. */
+function assertNoGraphqlErrors(json: unknown, what: string) {
+  const errors = (json as { errors?: Array<{ message?: string; extensions?: { code?: string; requiredAccess?: string } }> }).errors;
+  if (!errors?.length) return;
+
+  const denied = errors.find((error) => error.extensions?.code === "ACCESS_DENIED");
+  if (denied) {
+    throw new Error(
+      `Shopify denied access to ${what}. The app is missing a permission: ${denied.extensions?.requiredAccess ?? denied.message ?? "unknown"}`,
+    );
+  }
+  throw new Error(`Shopify returned an error for ${what}: ${errors.map((error) => error.message).join("; ").slice(0, 300)}`);
+}
+
 export async function syncShopifyPagesToKnowledge(shopId: string, shopDomain: string) {
   const token = await getDecryptedShopAccessToken(shopId);
   if (!token) throw new Error("No shop access token available");
@@ -69,6 +83,7 @@ export async function syncShopifyPagesToKnowledge(shopId: string, shopDomain: st
     };
   };
 
+  assertNoGraphqlErrors(json, "pages");
   const pages = json.data?.pages?.edges ?? [];
   const syncedDocs = [];
 
@@ -78,14 +93,14 @@ export async function syncShopifyPagesToKnowledge(shopId: string, shopDomain: st
     const cleanBody = body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 
     const doc = await db.knowledgeDocument.upsert({
-      where: { id: `shopify-page-${handle}` },
+      where: { id: `shopify-page-${shopId}-${handle}` },
       update: {
         title: `[Shopify Page] ${title}`,
         content: cleanBody,
         status: "PUBLISHED",
       },
       create: {
-        id: `shopify-page-${handle}`,
+        id: `shopify-page-${shopId}-${handle}`,
         shopId,
         title: `[Shopify Page] ${title}`,
         sourceType: "SHOPIFY_PAGE",
@@ -152,6 +167,7 @@ export async function syncShopifyProductsToKnowledge(shopId: string, shopDomain:
     };
   };
 
+  assertNoGraphqlErrors(json, "products");
   const products = json.data?.products?.edges ?? [];
   const syncedDocs = [];
 
@@ -162,14 +178,14 @@ export async function syncShopifyProductsToKnowledge(shopId: string, shopDomain:
     const content = `Product Title: ${title}\nVendor: ${vendor}\nType: ${productType}\nDescription: ${cleanDesc}`;
 
     const doc = await db.knowledgeDocument.upsert({
-      where: { id: `shopify-product-${handle}` },
+      where: { id: `shopify-product-${shopId}-${handle}` },
       update: {
         title: `[Product] ${title}`,
         content,
         status: "PUBLISHED",
       },
       create: {
-        id: `shopify-product-${handle}`,
+        id: `shopify-product-${shopId}-${handle}`,
         shopId,
         title: `[Product] ${title}`,
         sourceType: "SHOPIFY_PRODUCT",

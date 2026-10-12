@@ -12,7 +12,7 @@ services:
       - key: PORT
         value: "3000"
       - key: SCOPES
-        value: read_customers,read_orders,read_products
+        value: read_customers,read_online_store_pages,read_orders,read_products
       # Full https URL, e.g. https://avento-customer-service.onrender.com
       - key: SHOPIFY_APP_URL
         sync: false

@@ -1,6 +1,6 @@
 import { PermissionName } from "@prisma/client";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { Form, redirect, useLoaderData } from "react-router";
+import { Form, redirect, useLoaderData, useSearchParams } from "react-router";
 import db from "../db.server";
 import { authenticateAdminOrFallback } from "../shopify.server";
 import { normalizeShopDomain } from "../services/shop.service.server";
@@ -96,10 +96,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
       await chunkAndEmbedDocument(document.id);
     }
-  } else if (intent === "sync-pages") {
-    await syncShopifyPagesToKnowledge(shop.id, shop.domain);
-  } else if (intent === "sync-products") {
-    await syncShopifyProductsToKnowledge(shop.id, shop.domain);
+  } else if (intent === "sync-pages" || intent === "sync-products") {
+    try {
+      const synced =
+        intent === "sync-pages"
+          ? await syncShopifyPagesToKnowledge(shop.id, shop.domain)
+          : await syncShopifyProductsToKnowledge(shop.id, shop.domain);
+      return redirect(`/app/ai/knowledge?synced=${intent === "sync-pages" ? "pages" : "products"}&count=${synced.length}`);
+    } catch (error) {
+      console.error(`[knowledge] ${intent} failed:`, error instanceof Error ? error.message : error);
+      const message = error instanceof Error ? error.message : "Sync failed.";
+      return redirect(`/app/ai/knowledge?error=${encodeURIComponent(message.slice(0, 300))}`);
+    }
   } else if (intent === "delete-document") {
     const documentId = String(formData.get("documentId") ?? "").trim();
     if (documentId) {
@@ -112,9 +120,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 export default function KnowledgePage() {
   const data = useLoaderData<typeof loader>();
+  const [searchParams] = useSearchParams();
+  const synced = searchParams.get("synced");
+  const syncedCount = searchParams.get("count");
+  const syncError = searchParams.get("error");
 
   return (
     <s-page heading={`AI Knowledge Base · ${data.shopName}`}>
+      {synced ? (
+        <s-banner tone="success">
+          Synced {syncedCount ?? "0"} Shopify {synced}.
+          {syncedCount === "0" ? ` No ${synced} were found in the store.` : ""}
+        </s-banner>
+      ) : null}
+      {syncError ? <s-banner tone="critical">{syncError}</s-banner> : null}
+
       <s-section heading="Shopify Auto-Sync Sources">
         <s-stack direction="inline" gap="base">
           <Form method="post">
