@@ -6,67 +6,75 @@ import { ensureDefaultRolesForShop, ensureUserMembership } from "./authorization
 
 const TOKEN_TTL_MS = 1000 * 60 * 15;
 
-function hashToken(value: string) {
+export function hashToken(value: string) {
   return crypto.createHmac("sha256", appConfig.TOKEN_HASH_SECRET).update(value).digest("hex");
+}
+
+/**
+ * Who may request a sign-in link: an active member of a shop (keeps their current role) or
+ * someone with a pending, unexpired invitation. Anyone else gets nothing, so a sign-in link can
+ * never be used to create access to a shop.
+ */
+export async function findLoginTarget(email: string): Promise<{
+  shopId: string;
+  roleName: RoleName;
+  name: string | null;
+} | null> {
+  const normalizedEmail = email.trim().toLowerCase();
+
+  const membership = await db.shopMembership.findFirst({
+    where: { status: "ACTIVE", user: { email: normalizedEmail, isActive: true } },
+    include: { role: true, user: true },
+    orderBy: { createdAt: "asc" },
+  });
+  if (membership) {
+    return { shopId: membership.shopId, roleName: membership.role.name, name: membership.user.name };
+  }
+
+  const invitation = await db.invitation.findFirst({
+    where: { email: normalizedEmail, status: "PENDING", expiresAt: { gt: new Date() } },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!invitation) return null;
+
+  const role = invitation.roleId ? await db.role.findUnique({ where: { id: invitation.roleId } }) : null;
+  return { shopId: invitation.shopId, roleName: role?.name ?? RoleName.AGENT, name: invitation.name };
+}
+
+/** Sign-in links requested for this address in the last 15 minutes, to limit mail flooding. */
+export function countRecentMagicLinks(email: string) {
+  return db.invitation.count({
+    where: {
+      email: email.trim().toLowerCase(),
+      tokenHash: { not: null },
+      createdAt: { gt: new Date(Date.now() - TOKEN_TTL_MS) },
+    },
+  });
 }
 
 export async function createMagicLinkToken({
   shopId,
   email,
   name,
-  roleName = RoleName.AGENT,
+  roleName,
 }: {
-  shopId?: string;
+  shopId: string;
   email: string;
   name?: string | null;
-  roleName?: RoleName;
+  roleName: RoleName;
 }) {
   const normalizedEmail = email.trim().toLowerCase();
   const token = crypto.randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + TOKEN_TTL_MS);
 
-  let resolvedShopId = shopId;
-
-  if (!resolvedShopId) {
-    // Check if user has an existing membership
-    const user = await db.user.findUnique({
-      where: { email: normalizedEmail },
-      include: { memberships: { take: 1 } },
-    });
-
-    resolvedShopId = user?.memberships[0]?.shopId;
-  }
-
-  if (!resolvedShopId) {
-    // Fallback to first available shop
-    const shop = await db.shop.findFirst({ orderBy: { createdAt: "asc" } });
-    resolvedShopId = shop?.id;
-  }
-
-  if (!resolvedShopId) {
-    // Create default shop if database has no shops yet
-    const shop = await db.shop.create({
-      data: {
-        domain: "default-store.myshopify.com",
-        name: "Default Store",
-      },
-    });
-    resolvedShopId = shop.id;
-  }
-
-  await ensureDefaultRolesForShop(resolvedShopId);
+  await ensureDefaultRolesForShop(shopId);
   const role = await db.role.findUnique({
-    where: {
-      shopId_name: {
-        shopId: resolvedShopId,
-        name: roleName,
-      },
-    },
+    where: { shopId_name: { shopId, name: roleName } },
   });
 
   const invitation = await db.invitation.create({
     data: {
-      shopId: resolvedShopId,
+      shopId,
       email: normalizedEmail,
       name: name ?? normalizedEmail,
       roleId: role?.id ?? null,

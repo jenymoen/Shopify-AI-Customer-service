@@ -1,12 +1,13 @@
 import { PermissionName, RoleName } from "@prisma/client";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { Form, redirect, useLoaderData } from "react-router";
+import { Form, redirect, useLoaderData, useSearchParams } from "react-router";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { normalizeShopDomain } from "../services/shop.service.server";
 import { createInviteForShop } from "../services/invite.service.server";
 import { hasPermission, resolveShopUser } from "../services/authorization.server";
 import { logAuditEvent } from "../services/audit.service.server";
+import { sendAuthEmail } from "../services/auth-email.server";
 
 const INVITEABLE_ROLES: RoleName[] = [RoleName.ADMIN, RoleName.AGENT, RoleName.EXTERNAL_AGENT, RoleName.VIEWER];
 
@@ -117,7 +118,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const expiryDays = isNaN(expiryDaysRaw) || expiryDaysRaw < 1 ? 14 : Math.min(expiryDaysRaw, 90);
 
-  await createInviteForShop({
+  const { invitation, token } = await createInviteForShop({
     shopId: shop.id,
     email,
     name: name || email,
@@ -135,14 +136,44 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     details: { email, role: roleName, expiryDays },
   });
 
-  return redirect("/app/invite");
+  const link = new URL("/portal/accept", process.env.SHOPIFY_APP_URL || request.url);
+  link.search = new URLSearchParams({ email, token, shopId: shop.id }).toString();
+
+  let sent = true;
+  try {
+    await sendAuthEmail({
+      kind: "invite",
+      shopId: shop.id,
+      toEmail: email,
+      toName: name || null,
+      link: link.toString(),
+      expiresInText: `expires in ${expiryDays} days`,
+    });
+  } catch (error) {
+    sent = false;
+    console.error("[auth-email] could not send invitation:", error instanceof Error ? error.message : error);
+    await db.invitation.update({ where: { id: invitation.id }, data: { status: "SEND_FAILED" } });
+  }
+
+  return redirect(`/app/invite?${sent ? "sent" : "failed"}=${encodeURIComponent(email)}`);
 };
 
 export default function InvitePage() {
   const data = useLoaderData<typeof loader>();
+  const [searchParams] = useSearchParams();
+  const sentTo = searchParams.get("sent");
+  const failedFor = searchParams.get("failed");
 
   return (
     <s-page heading={`Invite team member · ${data.shopName}`}>
+      {sentTo ? <s-banner tone="success">Invitation sent to {sentTo}.</s-banner> : null}
+      {failedFor ? (
+        <s-banner tone="critical">
+          The invitation to {failedFor} could not be emailed, so it was not created. Check that a sender address is set
+          under Email settings and that the email provider is configured, then try again.
+        </s-banner>
+      ) : null}
+
       <Form method="post">
         <input type="hidden" name="intent" value="invite" />
         <s-section heading="Create invite">

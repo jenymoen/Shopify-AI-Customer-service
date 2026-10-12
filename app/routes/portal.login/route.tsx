@@ -1,67 +1,62 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, useActionData, useLoaderData } from "react-router";
-import db from "../../db.server";
-import { createMagicLinkToken } from "../../services/portal-auth.server";
+import { countRecentMagicLinks, createMagicLinkToken, findLoginTarget } from "../../services/portal-auth.server";
+import { sendAuthEmail } from "../../services/auth-email.server";
 
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const url = new URL(request.url);
-  const email = url.searchParams.get("email") ?? "";
-
-  return {
-    email,
-    success: false,
-    error: null as string | null,
-    magicLinkUrl: null as string | null,
-  };
+type LoginResult = {
+  email: string;
+  success: boolean;
+  error: string | null;
+  /** Only ever set outside production when no mail provider is configured. */
+  magicLinkUrl: string | null;
 };
 
-export const action = async ({ request }: ActionFunctionArgs) => {
+export const loader = async ({ request }: LoaderFunctionArgs): Promise<LoginResult> => {
+  const url = new URL(request.url);
+  return { email: url.searchParams.get("email") ?? "", success: false, error: null, magicLinkUrl: null };
+};
+
+export const action = async ({ request }: ActionFunctionArgs): Promise<LoginResult> => {
   const formData = await request.formData();
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
 
   if (!email) {
-    return {
-      success: false,
-      error: "Email is required.",
-      magicLinkUrl: null,
-    };
+    return { email, success: false, error: "Email is required.", magicLinkUrl: null };
   }
 
-  const pendingInvite = await db.invitation.findFirst({
-    where: {
+  let magicLinkUrl: string | null = null;
+
+  // The answer is identical whether or not the address is known, so the form cannot be used to
+  // find out who has access. A link is only created for members and pending invitations.
+  const target = await findLoginTarget(email);
+  if (target && (await countRecentMagicLinks(email)) < 3) {
+    const { token } = await createMagicLinkToken({
+      shopId: target.shopId,
       email,
-      status: "PENDING",
-      expiresAt: {
-        gt: new Date(),
-      },
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-  });
+      name: target.name,
+      roleName: target.roleName,
+    });
 
-  const { token, invitation } = await createMagicLinkToken({
-    shopId: pendingInvite?.shopId,
-    email,
-    name: pendingInvite?.name ?? email,
-  });
+    const link = new URL("/portal/accept", process.env.SHOPIFY_APP_URL || request.url);
+    link.search = new URLSearchParams({ email, token, shopId: target.shopId }).toString();
 
-  const magicLinkUrl = new URL("/portal/accept", request.url).toString();
-  const params = new URLSearchParams({
-    email,
-    token,
-  });
-
-  if (pendingInvite?.shopId) {
-    params.set("shopId", pendingInvite.shopId);
+    try {
+      await sendAuthEmail({
+        kind: "login",
+        shopId: target.shopId,
+        toEmail: email,
+        toName: target.name,
+        link: link.toString(),
+        expiresInText: "expires in 15 minutes",
+      });
+    } catch (error) {
+      console.error("[auth-email] could not send sign-in link:", error instanceof Error ? error.message : error);
+      // Convenience for local development only; production never hands the link to the browser.
+      if (process.env.NODE_ENV !== "production") magicLinkUrl = link.toString();
+    }
   }
 
-  return {
-    success: true,
-    error: null,
-    magicLinkUrl: `${magicLinkUrl}?${params.toString()}`,
-    email: invitation.email,
-  };
+  return { email, success: true, error: null, magicLinkUrl };
 };
 
 export default function PortalLoginPage() {
@@ -143,6 +138,22 @@ export default function PortalLoginPage() {
             </div>
           ) : null}
 
+          {data.success && !data.magicLinkUrl ? (
+            <div
+              style={{
+                padding: "16px",
+                backgroundColor: "#f3faf7",
+                border: "1px solid #a7f3d0",
+                borderRadius: "8px",
+                color: "#065f46",
+                fontSize: "14px",
+                marginBottom: "20px",
+              }}
+            >
+              If {data.email} has access to the portal, a sign-in link is on its way. It is valid for 15 minutes.
+            </div>
+          ) : null}
+
           {data.success && data.magicLinkUrl ? (
             <div
               style={{
@@ -156,7 +167,7 @@ export default function PortalLoginPage() {
                 wordBreak: "break-all",
               }}
             >
-              <strong>✓ Magic link ready!</strong>
+              <strong>✓ Magic link ready! (development only, no mail provider)</strong>
               <div style={{ marginTop: "8px" }}>
                 <a
                   href={data.magicLinkUrl}

@@ -55,6 +55,37 @@ export async function sendReplyToCustomer(options: SendReplyOptions): Promise<{ 
   return { messageId };
 }
 
+/**
+ * Sends a one-off system email (invitation, sign-in link) that is not part of a ticket thread.
+ * Unlike ticket replies it never falls back to a console stub: callers must handle the failure.
+ */
+export async function sendSystemEmail(options: {
+  toEmail: string;
+  subject: string;
+  bodyText: string;
+  fromName: string;
+  fromAddress: string;
+}): Promise<void> {
+  const provider = appConfig.EMAIL_PROVIDER;
+  if (!appConfig.EMAIL_API_KEY || (provider !== "postmark" && provider !== "resend")) {
+    throw new Error("Email provider is not configured (EMAIL_PROVIDER / EMAIL_API_KEY).");
+  }
+
+  const fromDomain = options.fromAddress.split("@")[1] ?? "localhost";
+  const full: SendReplyOptions = {
+    shopId: "",
+    ticketId: "system",
+    ticketNumber: "",
+    ...options,
+    inReplyTo: null,
+    references: null,
+  };
+  const messageId = `<system-${Date.now()}-${Math.random().toString(36).slice(2, 10)}@${fromDomain}>`;
+
+  if (provider === "postmark") await sendViaPostmark(full, messageId);
+  else await sendViaResend(full, messageId);
+}
+
 async function sendViaPostmark(options: SendReplyOptions, messageId: string): Promise<void> {
   const headers: Record<string, string> = {
     Accept: "application/json",
