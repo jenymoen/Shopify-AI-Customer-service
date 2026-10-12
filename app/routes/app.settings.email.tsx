@@ -47,6 +47,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return {
     shopDomain: shop.domain,
     supportEmail: shop.supportEmail ?? "",
+    supportName: shop.supportName ?? "",
     // eslint-disable-next-line no-undef
     inboundAddress: process.env.EMAIL_INBOUND_ADDRESS ?? "",
   };
@@ -56,6 +57,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const shop = await requireShopSettingsAccess(request);
   const formData = await request.formData();
   const supportEmail = String(formData.get("supportEmail") ?? "").trim().toLowerCase();
+  const supportName = String(formData.get("supportName") ?? "").trim().slice(0, 80);
 
   if (supportEmail && !EMAIL_PATTERN.test(supportEmail)) {
     return { ok: false, message: "Enter a valid email address." };
@@ -64,7 +66,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   try {
     await db.shop.update({
       where: { id: shop.id },
-      data: { supportEmail: supportEmail || null },
+      data: { supportEmail: supportEmail || null, supportName: supportName || null },
     });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
@@ -80,7 +82,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function EmailSettingsPage() {
-  const { shopDomain, supportEmail, inboundAddress } = useLoaderData<typeof loader>();
+  const { shopDomain, supportEmail, supportName, inboundAddress } = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>();
   const isSaving = useNavigation().state === "submitting";
 
@@ -103,6 +105,13 @@ export default function EmailSettingsPage() {
               name="supportEmail"
               placeholder="support@yourstore.com"
               defaultValue={supportEmail}
+            />
+            <s-text-field
+              label="Sender name"
+              name="supportName"
+              placeholder="Lil Tracker Support"
+              details="Shown to customers before the support address on your replies."
+              defaultValue={supportName}
             />
             <s-button type="submit" variant="primary" loading={isSaving || undefined}>
               Save

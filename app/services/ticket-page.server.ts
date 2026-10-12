@@ -379,7 +379,7 @@ export async function handleTicketPageAction(
     let outbound: { messageId: string; inReplyTo: string | null; references: string | null } | null = null;
     const customerEmail = ticket.customer?.email?.trim().toLowerCase();
     if (customerEmail) {
-      const shop = await db.shop.findUnique({ where: { id: session.shopId }, select: { name: true, supportEmail: true } });
+      const shop = await db.shop.findUnique({ where: { id: session.shopId }, select: { name: true, supportName: true, supportEmail: true } });
       const fromAddress = shop?.supportEmail ?? process.env.EMAIL_FROM_ADDRESS ?? null;
       if (!fromAddress && process.env.EMAIL_API_KEY) {
         return data<TicketActionError>(
@@ -400,7 +400,7 @@ export async function handleTicketPageAction(
           ticketNumber: ticket.ticketNumber,
           toEmail: customerEmail,
           toName: [ticket.customer?.firstName, ticket.customer?.lastName].filter(Boolean).join(" ") || null,
-          fromName: shop?.name ?? "Support",
+          fromName: shop?.supportName || (shop?.name && !shop.name.endsWith(".myshopify.com") ? shop.name : "Support"),
           fromAddress: fromAddress ?? "support@localhost",
           subject,
           bodyText: finalMessage,

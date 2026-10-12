@@ -114,6 +114,8 @@ model Shop {
   // Customer-facing support address (e.g. support@liltracker.no). Inbound email
   // forwarded to Postmark is routed to the shop whose supportEmail is a recipient.
   supportEmail       String?              @unique
+  // Display name shown before the support address on outgoing replies ("Lil Tracker Support").
+  supportName        String?
   createdAt          DateTime             @default(now())
   updatedAt          DateTime             @updatedAt
   installations      ShopifyInstallation[]
