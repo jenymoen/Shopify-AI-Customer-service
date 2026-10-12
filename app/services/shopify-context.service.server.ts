@@ -52,8 +52,8 @@ export async function lookupShopifyCustomerByEmail(
             lastName
             email
             phone
-            ordersCount
-            totalSpentV2 { amount currencyCode }
+            numberOfOrders
+            amountSpent { amount currencyCode }
             tags
             createdAt
             verifiedEmail
@@ -77,9 +77,13 @@ export async function lookupShopifyCustomerByEmail(
       },
     );
 
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.error(`[shopify-context] customer lookup failed: HTTP ${res.status} for ${shopDomain}`);
+      return null;
+    }
 
     const json = (await res.json()) as {
+      errors?: unknown;
       data?: {
         customers?: {
           edges?: Array<{
@@ -89,8 +93,8 @@ export async function lookupShopifyCustomerByEmail(
               lastName: string | null;
               email: string | null;
               phone: string | null;
-              ordersCount: number;
-              totalSpentV2: { amount: string };
+              numberOfOrders: string | number;
+              amountSpent: { amount: string };
               tags: string[];
               createdAt: string;
               verifiedEmail: boolean;
@@ -101,6 +105,7 @@ export async function lookupShopifyCustomerByEmail(
       };
     };
 
+    if (json.errors) console.error("[shopify-context] customer lookup GraphQL errors:", JSON.stringify(json.errors).slice(0, 500));
     const node = json.data?.customers?.edges?.[0]?.node;
     if (!node) return null;
 
@@ -110,8 +115,8 @@ export async function lookupShopifyCustomerByEmail(
       lastName: node.lastName,
       email: node.email,
       phone: node.phone,
-      ordersCount: node.ordersCount,
-      totalSpent: node.totalSpentV2.amount,
+      ordersCount: Number(node.numberOfOrders),
+      totalSpent: node.amountSpent.amount,
       tags: node.tags,
       createdAt: node.createdAt,
       verifiedEmail: node.verifiedEmail,
@@ -140,8 +145,8 @@ export async function lookupShopifyOrdersByEmail(
             id
             name
             createdAt
-            financialStatus
-            fulfillmentStatus
+            displayFinancialStatus
+            displayFulfillmentStatus
             totalPriceSet { shopMoney { amount currencyCode } }
             lineItems(first: 5) {
               edges {
@@ -179,9 +184,13 @@ export async function lookupShopifyOrdersByEmail(
       },
     );
 
-    if (!res.ok) return [];
+    if (!res.ok) {
+      console.error(`[shopify-context] order lookup failed: HTTP ${res.status} for ${shopDomain}`);
+      return [];
+    }
 
     const json = (await res.json()) as {
+      errors?: unknown;
       data?: {
         orders?: {
           edges?: Array<{
@@ -189,8 +198,8 @@ export async function lookupShopifyOrdersByEmail(
               id: string;
               name: string;
               createdAt: string;
-              financialStatus: string;
-              fulfillmentStatus: string | null;
+              displayFinancialStatus: string;
+              displayFulfillmentStatus: string | null;
               totalPriceSet: { shopMoney: { amount: string; currencyCode: string } };
               lineItems: { edges: Array<{ node: { title: string; quantity: number; originalUnitPriceSet: { shopMoney: { amount: string } } } }> };
               fulfillments: Array<{ trackingInfo: Array<{ url: string }> }>;
@@ -202,6 +211,7 @@ export async function lookupShopifyOrdersByEmail(
       };
     };
 
+    if (json.errors) console.error("[shopify-context] order lookup GraphQL errors:", JSON.stringify(json.errors).slice(0, 500));
     const orders = json.data?.orders?.edges ?? [];
 
     return orders
@@ -211,8 +221,8 @@ export async function lookupShopifyOrdersByEmail(
         id: node.id,
         name: node.name,
         createdAt: node.createdAt,
-        financialStatus: node.financialStatus,
-        fulfillmentStatus: node.fulfillmentStatus,
+        financialStatus: node.displayFinancialStatus,
+        fulfillmentStatus: node.displayFulfillmentStatus,
         totalPrice: node.totalPriceSet.shopMoney.amount,
         currency: node.totalPriceSet.shopMoney.currencyCode,
         lineItems: node.lineItems.edges.map((le) => ({
