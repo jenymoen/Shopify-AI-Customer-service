@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Form, useActionData, useLoaderData, useLocation, useNavigation, useSearchParams } from "react-router";
+import { Form, Link, useActionData, useLoaderData, useLocation, useNavigation, useSearchParams } from "react-router";
 import type { TicketStatus } from "@prisma/client";
 import type { TicketActionError, TicketPageData, TicketUpdateKind } from "../services/ticket-page.server";
 
@@ -236,8 +236,8 @@ export function TicketPage() {
       <div style={{ maxWidth: "1280px", margin: "0 auto" }}>
         <div style={{ marginBottom: "20px" }}>
           <div style={{ marginBottom: "12px" }}>
-            <a
-              href={ticket.backPath}
+            <Link
+              to={ticket.backPath}
               style={{
                 fontSize: "13px",
                 color: "#475569",
@@ -248,8 +248,8 @@ export function TicketPage() {
                 gap: "6px",
               }}
             >
-              ← Back to Portal Dashboard
-            </a>
+              {ticket.backPath.startsWith("/app") ? "← Back to Inbox" : "← Back to Portal Dashboard"}
+            </Link>
           </div>
 
           <div
@@ -838,7 +838,7 @@ export function TicketPage() {
               <h3 style={{ fontSize: "15px", fontWeight: 700, margin: "0 0 8px 0", color: "#0f172a" }}>AI Actions</h3>
               <p style={{ fontSize: "12px", color: "#64748b", margin: "0 0 12px 0" }}>
                 Propose any registered action (getOrder, refundOrder, createReturn, etc.). Write actions go through policy guardrails and, unless autopilot is enabled, require approval on the{" "}
-                <a href={ticket.actionsPath} style={{ color: "#2563eb" }}>Actions page</a>.
+                <Link to={ticket.actionsPath} style={{ color: "#2563eb" }}>Actions page</Link>.
               </p>
               <Form method="post">
                 <input type="hidden" name="intent" value="propose-action" />

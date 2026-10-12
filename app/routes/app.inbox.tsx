@@ -102,9 +102,9 @@ export default function InboxPage() {
       {/* Filter tabs */}
       <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 20 }}>
         {FILTERS.map((f) => (
-          <a
+          <Link
             key={f}
-            href={`?filter=${f}`}
+            to={`?filter=${f}`}
             style={{
               padding: "6px 14px",
               borderRadius: 20,
@@ -118,7 +118,7 @@ export default function InboxPage() {
             }}
           >
             {FILTER_LABELS[f]}
-          </a>
+          </Link>
         ))}
       </div>
 
