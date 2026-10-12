@@ -36,7 +36,13 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      - key: EMAIL_PROVIDER
+        value: resend
+      # Resend API key with full access (needed to read received emails)
       - key: EMAIL_API_KEY
+        sync: false
+      # Signing secret (whsec_...) of the Resend "email.received" webhook
+      - key: RESEND_WEBHOOK_SECRET
         sync: false
       - key: EMAIL_INBOUND_WEBHOOK_SECRET
         sync: false

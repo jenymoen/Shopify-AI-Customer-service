@@ -1,9 +1,6 @@
 import type { ActionFunctionArgs } from "react-router";
 import crypto from "node:crypto";
-import db from "../../db.server";
-import { SenderType } from "@prisma/client";
-import { findOrCreateCustomerByEmail, findOrCreateTicketFromEmail } from "../../services/ticket.service.server";
-import { logAuditEvent } from "../../services/audit.service.server";
+import { processInboundEmail } from "../../services/email-inbound.server";
 
 // Postmark does not sign inbound webhooks; it supports Basic Auth embedded in the
 // webhook URL instead: https://postmark:<EMAIL_INBOUND_WEBHOOK_SECRET>@<host>/webhooks/email/inbound
@@ -22,31 +19,6 @@ function verifyWebhookAuth(request: Request): boolean {
   const expected = Buffer.from(secret);
   const actual = Buffer.from(password);
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
-}
-
-type ResolvedShop = { id: string; name: string; domain: string };
-
-// Mail forwarded from a shop's own address (e.g. support@liltracker.no) keeps that
-// address in To/Cc, so it is the most specific way to pick the shop.
-async function resolveShopFromSupportEmail(recipients: string[]): Promise<ResolvedShop | null> {
-  if (recipients.length === 0) return null;
-  return db.shop.findFirst({ where: { supportEmail: { in: recipients }, status: "ACTIVE" } });
-}
-
-// `abc123+cronus-jens@inbound.postmarkapp.com` → MailboxHash "cronus-jens" → cronus-jens.myshopify.com
-async function resolveShopFromMailboxHash(mailboxHash: string): Promise<ResolvedShop | null> {
-  const handle = mailboxHash.trim().toLowerCase().replace(/[^a-z0-9.-]/g, "");
-  if (!handle) return null;
-  const domain = handle.includes(".") ? handle : `${handle}.myshopify.com`;
-  return db.shop.findFirst({ where: { domain, status: "ACTIVE" } });
-}
-
-async function resolveShopFromRecipient(recipient: string): Promise<ResolvedShop | null> {
-  const domain = recipient.split("@")[1]?.toLowerCase().replace(/[^a-z0-9.-]/g, "");
-  if (!domain) return null;
-  const shop = await db.shop.findFirst({ where: { domain, status: "ACTIVE" } });
-  if (shop) return shop;
-  return db.shop.findFirst({ where: { domain: { contains: domain }, status: "ACTIVE" } });
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -81,55 +53,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (!fromEmail) return new Response("Missing sender email", { status: 400 });
   if (!bodyText && !bodyHtml) return new Response("Missing email body", { status: 400 });
 
-  const mailboxHash = String(payload["MailboxHash"] ?? "").trim();
-  let shop = await resolveShopFromSupportEmail([...toEmails, ...ccEmails]);
-  if (!shop && mailboxHash) shop = await resolveShopFromMailboxHash(mailboxHash);
-  if (!shop) {
-    for (const to of toEmails) { shop = await resolveShopFromRecipient(to); if (shop) break; }
-  }
-  if (!shop) {
-    console.warn("[email:webhook] Could not resolve shop from recipients:", toEmails, "mailboxHash:", mailboxHash);
-    return new Response("OK", { status: 200 });
-  }
-
-  const customer = await findOrCreateCustomerByEmail({
-    shopId: shop.id, email: fromEmail,
-    firstName: fromName?.split(" ")[0] ?? null,
-    lastName: fromName?.split(" ").slice(1).join(" ") || null,
+  await processInboundEmail({
+    fromEmail,
+    fromName,
+    toEmails,
+    ccEmails,
+    mailboxHash: String(payload["MailboxHash"] ?? "").trim(),
+    subject,
+    bodyText,
+    bodyHtml,
+    messageId,
+    inReplyTo,
+    references,
   });
 
-  const { ticket, isNew } = await findOrCreateTicketFromEmail({
-    shopId: shop.id, customerId: customer.id, subject, inReplyTo, messageId,
-  });
-
-  const message = await db.ticketMessage.create({
-    data: {
-      ticketId: ticket.id, senderType: SenderType.CUSTOMER,
-      body: bodyText || "(no text body)",
-      bodyHtml: bodyHtml ?? undefined,
-      messageId: messageId ?? undefined,
-      inReplyTo: inReplyTo ?? undefined,
-      references: references ?? undefined,
-      isIncoming: true,
-    },
-  });
-
-  await db.ticket.update({
-    where: { id: ticket.id },
-    data: {
-      lastMessageAt: new Date(),
-      ...(ticket.status === "RESOLVED" || ticket.status === "CLOSED" ? { status: "OPEN", aiStatus: "PENDING" } : {}),
-    },
-  });
-
-  await logAuditEvent({
-    shopId: shop.id, entityType: "ticket", entityId: ticket.id,
-    eventType: isNew ? "email.inbound.new_ticket" : "email.inbound.reply",
-    details: { from: fromEmail, subject, messageId, ticketNumber: ticket.ticketNumber, messageDbId: message.id },
-    ticketId: ticket.id,
-  });
-
-  console.log(`[email:webhook] ${isNew ? "Created" : "Updated"} ticket ${ticket.ticketNumber} from ${fromEmail}`);
+  // Always 200 once handled: an unresolved shop or a duplicate will not get better on retry.
   return new Response("OK", { status: 200 });
 };
-
