@@ -50,6 +50,11 @@ export const sessionStorage = shopify.sessionStorage;
  * directly in the browser during local development.
  */
 export async function authenticateAdminOrFallback(request: Request) {
+  // The standalone fallback below skips authentication entirely, so it must never exist in production.
+  if (process.env.NODE_ENV === "production") {
+    return shopify.authenticate.admin(request);
+  }
+
   const url = new URL(request.url);
   const isEmbedded =
     url.searchParams.has("embedded") ||

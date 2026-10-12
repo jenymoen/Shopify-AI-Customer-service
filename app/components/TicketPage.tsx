@@ -22,6 +22,109 @@ function describeUpdates(updated: string, ticket: TicketPageData) {
   return parts.length ? parts.join(", ") : null;
 }
 
+// Splits an email body into the new text and the quoted history below it, so long
+// "> ..." threads and "On ... wrote:" blocks can be collapsed.
+const QUOTE_START = /^\s*>/;
+const ATTRIBUTION = /\b(wrote|skrev)\b.*:\s*$|\b(wrote|skrev)\s*:?\s*$/i;
+const ORIGINAL_MARKER = /^\s*(-{2,}\s*(Original Message|Opprinnelig melding|Videresendt melding)|_{10,}|(Fra|From):\s.+)/i;
+
+function splitQuotedText(body: string): { fresh: string; quoted: string } {
+  const lines = body.split(/\r?\n/);
+  let start = lines.findIndex((line) => QUOTE_START.test(line) || ORIGINAL_MARKER.test(line));
+  if (start === -1) return { fresh: body, quoted: "" };
+
+  // Pull the "On <date>, <name> wrote:" attribution (it may wrap over two lines) into the quoted part.
+  let prev = start - 1;
+  while (prev >= 0 && lines[prev].trim() === "") prev--;
+  if (prev >= 0 && ATTRIBUTION.test(lines[prev])) {
+    start = prev;
+    if (start > 0 && /^\s*(On|Den)\s/i.test(lines[start - 1])) start -= 1;
+  }
+
+  return {
+    fresh: lines.slice(0, start).join("\n").trim(),
+    quoted: lines.slice(start).join("\n").trim(),
+  };
+}
+
+// HTML mail is shown in a sandboxed iframe: no scripts, no forms, no top navigation,
+// and a CSP that only allows inline styles and https images.
+function SandboxedHtml({ html }: { html: string }) {
+  const doc =
+    `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline'">` +
+    `<base target="_blank"><style>body{font-family:system-ui,sans-serif;font-size:14px;margin:8px;overflow-wrap:anywhere}img{max-width:100%;height:auto}</style>` +
+    html;
+  return (
+    <iframe
+      title="Original email"
+      sandbox=""
+      srcDoc={doc}
+      style={{ width: "100%", height: "480px", border: "1px solid #e2e8f0", borderRadius: "8px", background: "#ffffff" }}
+    />
+  );
+}
+
+function MessageBody({ body, bodyHtml }: { body: string; bodyHtml: string | null }) {
+  const [showQuoted, setShowQuoted] = useState(false);
+  const [showHtml, setShowHtml] = useState(false);
+  const { fresh, quoted } = splitQuotedText(body);
+  const linkButton = {
+    background: "none",
+    border: "none",
+    padding: 0,
+    marginRight: "16px",
+    color: "#2563eb",
+    fontSize: "12px",
+    fontWeight: 600,
+    cursor: "pointer",
+  } as const;
+
+  return (
+    <div style={{ fontSize: "14px", lineHeight: "1.6", color: "#1e293b" }}>
+      <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word" }}>
+        {fresh || (quoted ? <span style={{ color: "#94a3b8" }}>(no new text, only quoted history)</span> : body)}
+      </div>
+
+      {quoted || bodyHtml ? (
+        <div style={{ marginTop: "8px" }}>
+          {quoted ? (
+            <button type="button" style={linkButton} onClick={() => setShowQuoted((value) => !value)}>
+              {showQuoted ? "Hide quoted text" : "Show quoted text"}
+            </button>
+          ) : null}
+          {bodyHtml ? (
+            <button type="button" style={linkButton} onClick={() => setShowHtml((value) => !value)}>
+              {showHtml ? "Hide original email" : "View original email"}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {showQuoted && quoted ? (
+        <div
+          style={{
+            marginTop: "8px",
+            paddingLeft: "12px",
+            borderLeft: "3px solid #cbd5e1",
+            color: "#64748b",
+            fontSize: "13px",
+            whiteSpace: "pre-wrap",
+            overflowWrap: "anywhere",
+            wordBreak: "break-word",
+          }}
+        >
+          {quoted}
+        </div>
+      ) : null}
+      {showHtml && bodyHtml ? (
+        <div style={{ marginTop: "8px" }}>
+          <SandboxedHtml html={bodyHtml} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // Confirms the last save, using the `?updated=` param set by handleTicketPageAction.
 function UpdateNotice({ ticket }: { ticket: TicketPageData }) {
   const [searchParams] = useSearchParams();
@@ -219,8 +322,8 @@ export function TicketPage() {
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: "24px", alignItems: "start" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 340px", gap: "24px", alignItems: "start" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "20px", minWidth: 0 }}>
             <div
               style={{
                 backgroundColor: "#ffffff",
@@ -242,6 +345,7 @@ export function TicketPage() {
                   {ticket.messages.map((msg: {
                     id: string;
                     body: string;
+                    bodyHtml: string | null;
                     senderType: string;
                     isIncoming: boolean;
                     createdAt: string;
@@ -272,9 +376,7 @@ export function TicketPage() {
                         </span>
                         <span>{new Date(msg.createdAt).toLocaleString()}</span>
                       </div>
-                      <div style={{ fontSize: "14px", lineHeight: "1.6", color: "#1e293b", whiteSpace: "pre-wrap" }}>
-                        {msg.body}
-                      </div>
+                      <MessageBody body={msg.body} bodyHtml={msg.bodyHtml} />
                     </div>
                   ))}
                 </div>
@@ -307,7 +409,7 @@ export function TicketPage() {
                       <div style={{ fontSize: "12px", fontWeight: 600, color: "#78350f", marginBottom: "4px" }}>
                         {note.authorName} · {new Date(note.createdAt).toLocaleString()}
                       </div>
-                      <div style={{ fontSize: "14px", color: "#1e293b", whiteSpace: "pre-wrap" }}>{note.body}</div>
+                      <div style={{ fontSize: "14px", color: "#1e293b", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{note.body}</div>
                     </div>
                   ))}
                 </div>
@@ -355,6 +457,7 @@ export function TicketPage() {
                     lineHeight: "1.6",
                     color: "#0f172a",
                     whiteSpace: "pre-wrap",
+                    overflowWrap: "anywhere",
                     marginBottom: "16px",
                   }}
                 >

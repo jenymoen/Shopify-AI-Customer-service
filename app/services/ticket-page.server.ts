@@ -269,9 +269,10 @@ export async function loadTicketPage(ticketId: string, session: TicketPageSessio
       cancelledAt: order.cancelledAt,
       refunds: order.refunds,
     })),
-    messages: ticket.messages.map((message: { id: string; body: string; senderType: string; isIncoming: boolean; createdAt: Date }) => ({
+    messages: ticket.messages.map((message: { id: string; body: string; bodyHtml?: string | null; senderType: string; isIncoming: boolean; createdAt: Date }) => ({
       id: message.id,
       body: message.body,
+      bodyHtml: message.bodyHtml ?? null,
       senderType: message.senderType,
       isIncoming: message.isIncoming,
       createdAt: message.createdAt.toISOString(),
