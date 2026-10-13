@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, redirect, useLoaderData } from "react-router";
-import { ActionCategory, PermissionName } from "@prisma/client";
+import { PermissionName } from "@prisma/client";
+import { ACTION_CATEGORY_WRITE } from "../lib/prisma-enum-values";
 import db from "../db.server";
 import { authenticateAdminOrFallback } from "../shopify.server";
 import { normalizeShopDomain } from "../services/shop.service.server";
@@ -97,8 +98,8 @@ export default function ActionPoliciesPage() {
                 <span
                   style={{
                     ...S.badge,
-                    background: policy.category === ActionCategory.WRITE ? "#fee2e2" : "#dbeafe",
-                    color: policy.category === ActionCategory.WRITE ? "#991b1b" : "#1e40af",
+                    background: policy.category === ACTION_CATEGORY_WRITE ? "#fee2e2" : "#dbeafe",
+                    color: policy.category === ACTION_CATEGORY_WRITE ? "#991b1b" : "#1e40af",
                   }}
                 >
                   {policy.category}
@@ -113,7 +114,7 @@ export default function ActionPoliciesPage() {
             <label style={S.toggleLabel}>
               <input type="checkbox" name="isEnabled" defaultChecked={policy.isEnabled} /> Enabled
             </label>
-            {policy.category === ActionCategory.WRITE && (
+            {policy.category === ACTION_CATEGORY_WRITE && (
               <>
                 <label style={S.toggleLabel}>
                   <input type="checkbox" name="requiresApproval" defaultChecked={policy.requiresApproval} /> Requires human approval

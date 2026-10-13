@@ -1,6 +1,7 @@
 import { AIInstructionType, PermissionName, Prisma } from "@prisma/client";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, redirect, useLoaderData } from "react-router";
+import { AI_INSTRUCTION_TYPES } from "../lib/prisma-enum-values";
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
 import { normalizeShopDomain } from "../services/shop.service.server";
@@ -135,7 +136,7 @@ export default function AiInstructionsPage() {
             <s-text-field name="name" label="Instruction name" value="" />
             <label htmlFor="type">Type</label>
             <select id="type" name="type" style={{ width: "100%" }}>
-              {Object.values(AIInstructionType).map((type) => (
+              {AI_INSTRUCTION_TYPES.map((type) => (
                 <option key={type} value={type}>
                   {type}
                 </option>

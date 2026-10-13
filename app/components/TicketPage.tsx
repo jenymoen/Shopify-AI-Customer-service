@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Form, Link, useActionData, useLoaderData, useLocation, useNavigation, useSearchParams } from "react-router";
 import type { TicketStatus } from "@prisma/client";
 import type { TicketActionError, TicketPageData, TicketUpdateKind } from "../services/ticket-page.server";
@@ -341,6 +341,21 @@ export function TicketPage() {
   const ticket = useLoaderData<TicketPageData>();
   const actionData = useActionData<TicketActionError | undefined>();
   const navigation = useNavigation();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+
+  // Clear the reply and note fields once they have been saved. A failed send returns the error on the
+  // same page without navigating, so the typed text is kept in that case.
+  const [replyFormKey, setReplyFormKey] = useState(0);
+  const clearedFor = useRef<string | null>(null);
+  const savedKinds = searchParams.get("updated") ?? "";
+  useEffect(() => {
+    const savedText = savedKinds.split(",").some((kind) => kind === "reply" || kind === "note");
+    if (savedText && clearedFor.current !== location.key) {
+      clearedFor.current = location.key;
+      setReplyFormKey((key) => key + 1);
+    }
+  }, [savedKinds, location.key]);
   const isSavingProperties = navigation.state !== "idle" && navigation.formData?.has("priority") === true;
 
   const statusColors: Record<string, { bg: string; text: string }> = {
@@ -685,7 +700,7 @@ export function TicketPage() {
                 </Form>
               </div>
 
-              <Form method="post">
+              <Form method="post" key={replyFormKey}>
                 <div style={{ marginBottom: "16px" }}>
                   <label
                     htmlFor="message"
