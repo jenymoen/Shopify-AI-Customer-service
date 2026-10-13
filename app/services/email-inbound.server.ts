@@ -16,6 +16,15 @@ export type InboundEmail = {
   messageId: string | null;
   inReplyTo: string | null;
   references: string | null;
+  attachments?: InboundAttachment[];
+};
+
+export type InboundAttachment = {
+  /** Where the bytes can be fetched later, e.g. "resend:<email id>:<attachment id>". */
+  storageKey: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number | null;
 };
 
 export type InboundResult =
@@ -100,6 +109,19 @@ export async function processInboundEmail(email: InboundEmail): Promise<InboundR
       isIncoming: true,
     },
   });
+
+  if (email.attachments?.length) {
+    await db.attachment.createMany({
+      data: email.attachments.map((attachment) => ({
+        ticketId: ticket.id,
+        messageId: message.id,
+        filename: attachment.filename,
+        contentType: attachment.contentType,
+        storageKey: attachment.storageKey,
+        sizeBytes: attachment.sizeBytes,
+      })),
+    });
+  }
 
   await db.ticket.update({
     where: { id: ticket.id },

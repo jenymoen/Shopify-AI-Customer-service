@@ -1,4 +1,5 @@
 import { data, redirect } from "react-router";
+import { previewKind, signedAttachmentPath } from "./attachment-access.server";
 import { AIExecutionDecision, PermissionName, SenderType, TicketStatus } from "@prisma/client";
 import db from "../db.server";
 import { hasPermission } from "./authorization.server";
@@ -99,6 +100,7 @@ export async function loadTicketPage(ticketId: string, session: TicketPageSessio
       customer: true,
       messages: {
         orderBy: { createdAt: "asc" },
+        include: { attachments: { orderBy: { createdAt: "asc" } } },
       },
       internalNotes: {
         orderBy: { createdAt: "asc" },
@@ -269,13 +271,30 @@ export async function loadTicketPage(ticketId: string, session: TicketPageSessio
       cancelledAt: order.cancelledAt,
       refunds: order.refunds,
     })),
-    messages: ticket.messages.map((message: { id: string; body: string; bodyHtml?: string | null; senderType: string; isIncoming: boolean; createdAt: Date }) => ({
+    messages: ticket.messages.map((message: {
+      id: string;
+      body: string;
+      bodyHtml?: string | null;
+      senderType: string;
+      isIncoming: boolean;
+      createdAt: Date;
+      attachments?: Array<{ id: string; filename: string; contentType: string; sizeBytes: number | null }>;
+    }) => ({
       id: message.id,
       body: message.body,
       bodyHtml: message.bodyHtml ?? null,
       senderType: message.senderType,
       isIncoming: message.isIncoming,
       createdAt: message.createdAt.toISOString(),
+      attachments: (message.attachments ?? []).map((attachment) => ({
+        id: attachment.id,
+        filename: attachment.filename,
+        contentType: attachment.contentType,
+        sizeBytes: attachment.sizeBytes,
+        previewKind: previewKind(attachment.contentType),
+        viewUrl: signedAttachmentPath(attachment.id, session.shopId),
+        downloadUrl: signedAttachmentPath(attachment.id, session.shopId, { download: true }),
+      })),
     })),
     internalNotes: ticket.internalNotes.map((note: { id: string; body: string; createdAt: Date; author?: { name?: string | null; email?: string | null } | null; isVisibleToCustomer: boolean }) => ({
       id: note.id,

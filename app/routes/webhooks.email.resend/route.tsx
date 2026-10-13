@@ -58,6 +58,28 @@ function htmlToText(html: string): string {
     .trim();
 }
 
+// Small inline images are signature logos and tracking pixels; real files and pasted screenshots are kept.
+const MIN_INLINE_BYTES = 15 * 1024;
+
+function collectAttachments(emailId: string, value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const attachment = item as Record<string, unknown>;
+    const id = String(attachment["id"] ?? "");
+    const size = typeof attachment["size"] === "number" ? (attachment["size"] as number) : null;
+    if (!id) return [];
+    if (attachment["content_disposition"] === "inline" && size !== null && size < MIN_INLINE_BYTES) return [];
+    return [
+      {
+        storageKey: `resend:${emailId}:${id}`,
+        filename: String(attachment["filename"] ?? "attachment").slice(0, 200),
+        contentType: String(attachment["content_type"] ?? "application/octet-stream"),
+        sizeBytes: size,
+      },
+    ];
+  });
+}
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   if (request.method !== "POST") return new Response("Method not allowed", { status: 405 });
 
@@ -135,6 +157,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     messageId: String(email["message_id"] ?? data["message_id"] ?? headers["message-id"] ?? "").trim() || null,
     inReplyTo: headers["in-reply-to"]?.trim() || null,
     references: headers["references"]?.trim() || null,
+    attachments: collectAttachments(emailId, email["attachments"] ?? data["attachments"]),
   });
 
   // Always 200 once handled: an unresolved shop or a duplicate will not get better on retry.

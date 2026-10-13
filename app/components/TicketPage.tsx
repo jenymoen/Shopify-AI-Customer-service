@@ -47,7 +47,7 @@ function splitQuotedText(body: string): { fresh: string; quoted: string } {
   };
 }
 
-// HTML mail is shown in a sandboxed iframe: no scripts, no forms, no top navigation,
+// HTML mail is shown in a sandboxed iframe: no scripts, no forms, no top navigation (links may open a new tab),
 // and a CSP that only allows inline styles and https images.
 function SandboxedHtml({ html }: { html: string }) {
   const doc =
@@ -57,14 +57,171 @@ function SandboxedHtml({ html }: { html: string }) {
   return (
     <iframe
       title="Original email"
-      sandbox=""
+      sandbox="allow-popups allow-popups-to-escape-sandbox"
       srcDoc={doc}
       style={{ width: "100%", height: "480px", border: "1px solid #e2e8f0", borderRadius: "8px", background: "#ffffff" }}
     />
   );
 }
 
-function MessageBody({ body, bodyHtml }: { body: string; bodyHtml: string | null }) {
+// Plain text with http(s) links turned into real links (the mail body is stored as text).
+const URL_PATTERN = /(https?:\/\/[^\s<>"]+)/g;
+
+function Linkified({ text }: { text: string }) {
+  const parts = text.split(URL_PATTERN);
+  return (
+    <>
+      {parts.map((part, index) => {
+        if (index % 2 === 0) return part;
+        // Trailing punctuation belongs to the sentence, not the address.
+        const trailing = part.match(/[.,;:!?)\]]+$/)?.[0] ?? "";
+        const href = trailing ? part.slice(0, -trailing.length) : part;
+        return (
+          <span key={index}>
+            <a href={href} target="_blank" rel="noopener noreferrer" style={{ color: "#2563eb" }}>
+              {href}
+            </a>
+            {trailing}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
+type TicketAttachment = {
+  id: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number | null;
+  previewKind: "image" | "pdf" | "text" | null;
+  viewUrl: string;
+  downloadUrl: string;
+};
+
+function formatFileSize(bytes: number | null) {
+  if (bytes === null) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function AttachmentViewer({ attachment, onClose }: { attachment: TicketAttachment; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const button = {
+    padding: "6px 12px",
+    fontSize: "13px",
+    fontWeight: 600,
+    borderRadius: "6px",
+    border: "1px solid #cbd5e1",
+    background: "#ffffff",
+    color: "#0f172a",
+    cursor: "pointer",
+    textDecoration: "none",
+  } as const;
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Preview of ${attachment.filename}`}
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 2000,
+        background: "rgba(15, 23, 42, 0.7)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "16px",
+      }}
+    >
+      <div
+        onClick={(event) => event.stopPropagation()}
+        style={{
+          background: "#ffffff",
+          borderRadius: "12px",
+          width: "min(1000px, 100%)",
+          height: "min(90vh, 900px)",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "12px 16px", borderBottom: "1px solid #e2e8f0" }}>
+          <div style={{ flex: 1, minWidth: 0, fontWeight: 600, fontSize: "14px", color: "#0f172a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {attachment.filename}
+          </div>
+          <a href={attachment.downloadUrl} style={button}>Download</a>
+          {attachment.previewKind ? (
+            <a href={attachment.viewUrl} target="_blank" rel="noopener noreferrer" style={button}>Open in new tab</a>
+          ) : null}
+          <button type="button" autoFocus onClick={onClose} style={button}>Close</button>
+        </div>
+        <div style={{ flex: 1, minHeight: 0, background: "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          {attachment.previewKind === "image" ? (
+            <img src={attachment.viewUrl} alt={attachment.filename} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+          ) : attachment.previewKind ? (
+            <iframe title={attachment.filename} src={attachment.viewUrl} style={{ width: "100%", height: "100%", border: "none", background: "#ffffff" }} />
+          ) : (
+            <div style={{ padding: "24px", textAlign: "center", color: "#475569", fontSize: "14px" }}>
+              This file type can't be previewed here.
+              <div style={{ marginTop: "12px" }}>
+                <a href={attachment.downloadUrl} style={{ ...button, display: "inline-block" }}>Download {attachment.filename}</a>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AttachmentList({ attachments }: { attachments: TicketAttachment[] }) {
+  const [open, setOpen] = useState<TicketAttachment | null>(null);
+  if (attachments.length === 0) return null;
+
+  return (
+    <div style={{ marginTop: "12px", display: "flex", flexWrap: "wrap", gap: "8px" }}>
+      {attachments.map((attachment) => (
+        <div
+          key={attachment.id}
+          style={{ display: "flex", alignItems: "center", gap: "8px", border: "1px solid #cbd5e1", borderRadius: "8px", background: "#ffffff", padding: "6px 10px", maxWidth: "100%" }}
+        >
+          {attachment.previewKind === "image" ? (
+            <img src={attachment.viewUrl} alt="" loading="lazy" width={40} height={40} style={{ objectFit: "cover", borderRadius: "4px" }} />
+          ) : (
+            <span aria-hidden="true" style={{ fontSize: "22px" }}>{attachment.previewKind === "pdf" ? "📄" : "📎"}</span>
+          )}
+          <div style={{ minWidth: 0 }}>
+            <button
+              type="button"
+              onClick={() => setOpen(attachment)}
+              style={{ display: "block", background: "none", border: "none", padding: 0, cursor: "pointer", color: "#1d4ed8", fontSize: "13px", fontWeight: 600, textAlign: "left", overflowWrap: "anywhere" }}
+            >
+              {attachment.filename}
+            </button>
+            <span style={{ fontSize: "11px", color: "#64748b" }}>{formatFileSize(attachment.sizeBytes)}</span>
+          </div>
+          <a href={attachment.downloadUrl} aria-label={`Download ${attachment.filename}`} style={{ fontSize: "12px", color: "#475569", marginLeft: "4px" }}>
+            Download
+          </a>
+        </div>
+      ))}
+      {open ? <AttachmentViewer attachment={open} onClose={() => setOpen(null)} /> : null}
+    </div>
+  );
+}
+
+function MessageBody({ body, bodyHtml, attachments }: { body: string; bodyHtml: string | null; attachments: TicketAttachment[] }) {
   const [showQuoted, setShowQuoted] = useState(false);
   const [showHtml, setShowHtml] = useState(false);
   const { fresh, quoted } = splitQuotedText(body);
@@ -82,7 +239,7 @@ function MessageBody({ body, bodyHtml }: { body: string; bodyHtml: string | null
   return (
     <div style={{ fontSize: "14px", lineHeight: "1.6", color: "#1e293b" }}>
       <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word" }}>
-        {fresh || (quoted ? <span style={{ color: "#94a3b8" }}>(no new text, only quoted history)</span> : body)}
+        {fresh ? <Linkified text={fresh} /> : quoted ? <span style={{ color: "#94a3b8" }}>(no new text, only quoted history)</span> : <Linkified text={body} />}
       </div>
 
       {quoted || bodyHtml ? (
@@ -113,9 +270,10 @@ function MessageBody({ body, bodyHtml }: { body: string; bodyHtml: string | null
             wordBreak: "break-word",
           }}
         >
-          {quoted}
+          <Linkified text={quoted} />
         </div>
       ) : null}
+      <AttachmentList attachments={attachments} />
       {showHtml && bodyHtml ? (
         <div style={{ marginTop: "8px" }}>
           <SandboxedHtml html={bodyHtml} />
@@ -346,6 +504,7 @@ export function TicketPage() {
                     id: string;
                     body: string;
                     bodyHtml: string | null;
+                    attachments: TicketAttachment[];
                     senderType: string;
                     isIncoming: boolean;
                     createdAt: string;
@@ -376,7 +535,7 @@ export function TicketPage() {
                         </span>
                         <span>{new Date(msg.createdAt).toLocaleString()}</span>
                       </div>
-                      <MessageBody body={msg.body} bodyHtml={msg.bodyHtml} />
+                      <MessageBody body={msg.body} bodyHtml={msg.bodyHtml} attachments={msg.attachments} />
                     </div>
                   ))}
                 </div>
