@@ -638,6 +638,7 @@ export function TicketPage() {
                   {ticket.aiSuggestion}
                 </div>
 
+                <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
                 <Form method="post">
                   <input type="hidden" name="intent" value="approve-ai" />
                   <input type="hidden" name="aiSuggestion" value={ticket.aiSuggestion} />
@@ -661,6 +662,25 @@ export function TicketPage() {
                     ✨ Approve &amp; Send to Customer
                   </button>
                 </Form>
+                <Form method="post">
+                  <input type="hidden" name="intent" value="dismiss-ai" />
+                  <button
+                    type="submit"
+                    style={{
+                      padding: "10px 20px",
+                      fontSize: "14px",
+                      fontWeight: 600,
+                      backgroundColor: "#ffffff",
+                      color: "#b91c1c",
+                      border: "1px solid #fca5a5",
+                      borderRadius: "8px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Discard suggestion
+                  </button>
+                </Form>
+                </div>
               </div>
             ) : null}
 

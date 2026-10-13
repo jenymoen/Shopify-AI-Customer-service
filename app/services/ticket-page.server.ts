@@ -173,7 +173,7 @@ export async function loadTicketPage(ticketId: string, session: TicketPageSessio
       orderBy: [{ user: { email: "asc" } }],
     }),
     db.aIExecution.findFirst({
-      where: { ticketId: ticketId, shopId: session.shopId },
+      where: { ticketId: ticketId, shopId: session.shopId, status: { not: "DISMISSED" } },
       orderBy: { createdAt: "desc" },
     }),
     getActiveAiInstructionsForShop(session.shopId),
@@ -350,6 +350,15 @@ export async function handleTicketPageAction(
 
   if (intent === "generate-ai") {
     await runOrchestratorForTicket(ticket.id, session.shopId);
+    return redirect(paths.ticket(ticket.id));
+  }
+
+  if (intent === "dismiss-ai") {
+    // Hides the suggestion; the execution row stays for the dashboard stats.
+    await db.aIExecution.updateMany({
+      where: { ticketId: ticket.id, shopId: session.shopId, status: "COMPLETED" },
+      data: { status: "DISMISSED" },
+    });
     return redirect(paths.ticket(ticket.id));
   }
 

@@ -202,6 +202,41 @@ async function callAIProvider(prompt: string): Promise<{ text: string; provider:
 
 // ── Candidate reply generation ────────────────────────────────────────────────
 
+const MAX_MESSAGE_CHARS = 2000;
+const MAX_TRANSCRIPT_CHARS = 16000;
+
+// Drops the quoted history ("> ..." lines, "On ... wrote:") that email clients append to every reply.
+function stripQuotedText(body: string): string {
+  const lines = body.split(/\r?\n/);
+  const start = lines.findIndex(
+    (line) =>
+      /^\s*>/.test(line) ||
+      /^\s*-{2,}\s*(Original Message|Opprinnelig melding)/i.test(line) ||
+      /^\s*(On|Den)\s.+\b(wrote|skrev)\b.*:?\s*$/i.test(line),
+  );
+  const fresh = (start === -1 ? lines : lines.slice(0, start)).join("\n").trim();
+  return fresh || body.trim();
+}
+
+// The whole thread, oldest first. If it is too long for the prompt, the oldest messages are dropped, never the newest.
+function buildConversationTranscript(messages: Array<{ body: string; senderType: string; isIncoming: boolean }>) {
+  const entries = messages.map((m) => {
+    const text = stripQuotedText(m.body);
+    const clipped = text.length > MAX_MESSAGE_CHARS ? `${text.slice(0, MAX_MESSAGE_CHARS)}…` : text;
+    return `[${m.isIncoming || m.senderType === "CUSTOMER" ? "Customer" : "Agent"}]: ${clipped}`;
+  });
+
+  const kept: string[] = [];
+  let total = 0;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    total += entries[i].length;
+    if (kept.length > 0 && total > MAX_TRANSCRIPT_CHARS) break;
+    kept.unshift(entries[i]);
+  }
+  const omitted = entries.length - kept.length;
+  return (omitted > 0 ? [`(${omitted} earlier message(s) omitted)`, ...kept] : kept).join("\n\n");
+}
+
 async function generateCandidateReply(
   ticket: {
     subject: string;
@@ -216,10 +251,7 @@ async function generateCandidateReply(
       ? [ticket.customer?.firstName, ticket.customer?.lastName].filter(Boolean).join(" ")
       : ticket.customer?.email ?? "there";
 
-  const recentMessages = ticket.messages
-    .slice(-3)
-    .map((m) => `[${m.isIncoming ? "Customer" : "Agent"}]: ${m.body.slice(0, 300)}`)
-    .join("\n");
+  const conversation = buildConversationTranscript(ticket.messages);
 
   const knowledgeContext = context.knowledgeMatches
     .map((m) => `Title: ${m.title}\n${m.content.slice(0, 400)}`)
@@ -240,9 +272,9 @@ async function generateCandidateReply(
     instructionsContext ? `STORE POLICIES:\n${instructionsContext}` : "",
     knowledgeContext ? `RELEVANT KNOWLEDGE:\n${knowledgeContext}` : "",
     ``,
-    `RECENT CONVERSATION:\n${recentMessages}`,
+    `FULL CONVERSATION (oldest first):\n${conversation}`,
     ``,
-    `Write a professional, empathetic reply to this customer. Be concise and helpful. Do not invent facts.`,
+    `Write a professional, empathetic reply to the customer's latest message. Take the whole conversation into account: do not repeat what the agent has already said, and do not ask for information the customer has already given. Be concise and helpful. Do not invent facts.`,
     `Sign off as "Support team".`,
     `Reply language: ${classification.language === "no" ? "Norwegian (bokmål)" : "English"}. Always write in the same language as the customer's latest message.`,
   ]
@@ -342,7 +374,6 @@ export async function runOrchestratorForTicket(
       customer: true,
       messages: {
         orderBy: { createdAt: "asc" },
-        take: 10,
       },
     },
   });
