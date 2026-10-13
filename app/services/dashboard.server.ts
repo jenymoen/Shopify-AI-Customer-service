@@ -1,7 +1,5 @@
 import db from "../db.server";
-
-export const DASHBOARD_RANGES = [7, 30, 90] as const;
-export type DashboardRange = (typeof DASHBOARD_RANGES)[number];
+import type { DashboardRange } from "../lib/dashboard-ranges";
 
 const OPEN_STATUSES = ["NEW", "OPEN", "WAITING_FOR_CUSTOMER", "WAITING_FOR_AGENT"] as const;
 // Statuses where the next move is ours, as opposed to waiting for the customer.

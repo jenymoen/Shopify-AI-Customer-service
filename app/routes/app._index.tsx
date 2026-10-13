@@ -6,8 +6,9 @@ import { authenticateAdminOrFallback } from "../shopify.server";
 import db from "../db.server";
 import { ensureShopOwnerMembership, normalizeShopDomain } from "../services/shop.service.server";
 import { hasPermission, resolveShopUser } from "../services/authorization.server";
-import { DASHBOARD_RANGES, loadDashboard } from "../services/dashboard.server";
-import type { DashboardRange } from "../services/dashboard.server";
+import { loadDashboard } from "../services/dashboard.server";
+import { DASHBOARD_RANGES } from "../lib/dashboard-ranges";
+import type { DashboardRange } from "../lib/dashboard-ranges";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticateAdminOrFallback(request);
