@@ -201,6 +201,11 @@ export async function createTicketMessage({
     },
   });
 
+  // First answer to the customer: used for the "first response time" KPI.
+  if (!isIncoming) {
+    await db.ticket.updateMany({ where: { id: ticketId, firstResponseAt: null }, data: { firstResponseAt: message.createdAt } });
+  }
+
   return message;
 }
 
@@ -255,6 +260,7 @@ export async function updateTicketAssignmentAndStatus({
       assigneeId: true,
       status: true,
       priority: true,
+      resolvedAt: true,
     },
   });
 
@@ -273,6 +279,9 @@ export async function updateTicketAssignmentAndStatus({
       status: nextStatus,
       assigneeId: nextAssigneeId,
       priority: nextPriority,
+      // Resolution time KPI: stamp when a ticket becomes resolved, clear it when it is reopened.
+      resolvedAt:
+        nextStatus === "RESOLVED" || nextStatus === "CLOSED" ? (existingTicket.resolvedAt ?? new Date()) : null,
       updatedAt: new Date(),
     },
   });

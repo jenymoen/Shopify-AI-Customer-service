@@ -105,7 +105,7 @@ export async function processInboundEmail(email: InboundEmail): Promise<InboundR
     where: { id: ticket.id },
     data: {
       lastMessageAt: new Date(),
-      ...(ticket.status === "RESOLVED" || ticket.status === "CLOSED" ? { status: "OPEN", aiStatus: "PENDING" } : {}),
+      ...(ticket.status === "RESOLVED" || ticket.status === "CLOSED" ? { status: "OPEN", aiStatus: "PENDING", resolvedAt: null } : {}),
     },
   });
 
