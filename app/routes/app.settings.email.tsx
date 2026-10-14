@@ -1,45 +1,10 @@
-import { PermissionName, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import db from "../db.server";
-import { authenticate } from "../shopify.server";
-import { normalizeShopDomain } from "../services/shop.service.server";
-import { hasPermission, resolveShopUser } from "../services/authorization.server";
+import { requireShopSettingsAccess } from "../services/settings-access.server";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-async function requireShopSettingsAccess(request: Request) {
-  const { session } = await authenticate.admin(request);
-
-  const shop = await db.shop.findUnique({
-    where: { domain: normalizeShopDomain(session.shop) },
-  });
-
-  if (!shop) {
-    console.warn(`[email-settings] no Shop row for ${session.shop}`);
-    throw new Response("Shop not found", { status: 404 });
-  }
-
-  const email = session.onlineAccessInfo?.associated_user?.email?.trim().toLowerCase();
-  const user = await resolveShopUser({ shopId: shop.id, email });
-  if (!user) {
-    console.warn(`[email-settings] no member user for shop ${shop.domain} (session email: ${email ?? "none"})`);
-    throw new Response("Access denied", { status: 403 });
-  }
-
-  const canWriteShop = await hasPermission({
-    userId: user.id,
-    shopId: shop.id,
-    permission: PermissionName.SHOPS_WRITE,
-  });
-
-  if (!canWriteShop) {
-    console.warn(`[email-settings] user ${user.id} lacks SHOPS_WRITE for shop ${shop.domain}`);
-    throw new Response("Access denied", { status: 403 });
-  }
-
-  return shop;
-}
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const shop = await requireShopSettingsAccess(request);
@@ -88,6 +53,7 @@ export default function EmailSettingsPage() {
 
   return (
     <s-page heading="Email settings">
+      <s-link slot="breadcrumb-actions" href="/app/settings">Settings</s-link>
       <s-section heading="Support email address">
         <s-paragraph>
           Customer emails sent to this address become tickets for {shopDomain}. Forward the

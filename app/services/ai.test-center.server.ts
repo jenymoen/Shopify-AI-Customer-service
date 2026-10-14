@@ -2,10 +2,14 @@ import db from "../db.server";
 import { searchKnowledgeForTicket } from "./knowledge.service.server";
 import { evaluateAssistedModeDecision } from "./ai.policy.server";
 import {
+  buildClassifyPrompt,
+  buildSupportPrompt,
+  parseClassification,
   classifyCustomerQuery as classifyGemini,
   generateSupportResponse as generateGemini,
   isRetryableGeminiError,
 } from "./ai.gemini.server";
+import { generateTextWithShopProviders, hasEnabledShopProviders } from "./ai.providers.server";
 import { classifyCustomerQuery as classifyAnthropic, generateSupportResponse as generateAnthropic } from "./ai.anthropic.server";
 
 export interface AITestResult {
@@ -54,7 +58,8 @@ export async function runAITestSimulation({
 }): Promise<AITestResult> {
   const hasGeminiKey = !!process.env.GEMINI_API_KEY;
   const hasAnthropicKey = !!process.env.ANTHROPIC_API_KEY;
-  const useRealAI = hasGeminiKey || hasAnthropicKey;
+  const hasShopProviders = await hasEnabledShopProviders(shopId);
+  const useRealAI = hasGeminiKey || hasAnthropicKey || hasShopProviders;
 
   // Step 1: Retrieve relevant knowledge chunks
   const chunks = await searchKnowledgeForTicket({ shopId, query: customerQuery, limit: 3 });
@@ -70,11 +75,28 @@ export async function runAITestSimulation({
   let isGrounded: boolean;
   let hasUnsupportedClaims: boolean;
 
-  // Gemini preferred, Anthropic as fallback (see withProviderFallback)
-  const classify = (query: string) =>
-    withProviderFallback(hasGeminiKey, hasAnthropicKey, () => classifyGemini(query), () => classifyAnthropic(query));
-  const generate = (args: Parameters<typeof generateGemini>[0]) =>
-    withProviderFallback(hasGeminiKey, hasAnthropicKey, () => generateGemini(args), () => generateAnthropic(args));
+  // Providers from Settings → AI providers come first (priority order); server env keys are the fallback.
+  // Gemini preferred, Anthropic as fallback among the env keys (see withProviderFallback).
+  const envFallback = <T,>(gemini: () => Promise<T>, anthropic: () => Promise<T>) => {
+    if (!hasGeminiKey && !hasAnthropicKey) {
+      throw new Error("All configured AI providers failed. Check the API keys in Settings → AI providers.");
+    }
+    return withProviderFallback(hasGeminiKey, hasAnthropicKey, gemini, anthropic);
+  };
+  const classify = async (query: string) => {
+    const configured = hasShopProviders ? await generateTextWithShopProviders(shopId, buildClassifyPrompt(query)) : null;
+    return configured
+      ? parseClassification(configured.text)
+      : envFallback(() => classifyGemini(query), () => classifyAnthropic(query));
+  };
+  const generate = async (args: Parameters<typeof generateGemini>[0]) => {
+    const configured = hasShopProviders ? await generateTextWithShopProviders(shopId, buildSupportPrompt(args)) : null;
+    if (configured) {
+      const isGrounded = args.knowledgeChunks.length > 0;
+      return { response: configured.text, isGrounded, hasUnsupportedClaims: !isGrounded };
+    }
+    return envFallback(() => generateGemini(args), () => generateAnthropic(args));
+  };
 
   if (useRealAI) {
     const [classification, shopRecord] = await Promise.all([

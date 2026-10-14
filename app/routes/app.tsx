@@ -42,7 +42,7 @@ export default function App() {
             ["/app/ai/test-center", "AI Test Center"],
             ["/app/action-policies", "Action Policies"],
             ["/app/invite", "Invite"],
-            ["/app/settings/email", "Email"],
+            ["/app/settings", "Settings"],
             ["/portal/dashboard", "Portal →"],
           ].map(([href, label]) => (
             <a
@@ -83,7 +83,7 @@ export default function App() {
         <s-link href="/app/ai/test-center">AI Test Center</s-link>
         <s-link href="/app/action-policies">Action Policies</s-link>
         <s-link href="/app/invite">Invite</s-link>
-        <s-link href="/app/settings/email">Email settings</s-link>
+        <s-link href="/app/settings">Settings</s-link>
       </s-app-nav>
       <Outlet />
     </AppProvider>

@@ -42,15 +42,8 @@ export async function generateText(prompt: string): Promise<string | null> {
   return result.text?.trim() || null;
 }
 
-/**
- * Classify a customer support query using Gemini.
- */
-export async function classifyCustomerQuery(query: string): Promise<{
-  category: string;
-  confidence: number;
-  reasoning: string;
-}> {
-  const prompt = `You are a customer support triage classifier. Classify the customer's message into exactly one category.
+export function buildClassifyPrompt(query: string) {
+  return `You are a customer support triage classifier. Classify the customer's message into exactly one category.
 
 Categories (pick the most specific):
 - ACCOUNT_ACCESS (login issues, password reset, account locked, can't access account)
@@ -70,12 +63,15 @@ Respond with ONLY valid JSON in this exact format (no markdown, no code block):
 
 Customer message:
 ${query}`;
+}
 
-  const result = await generateContent(prompt);
-
-  const text = result.text ?? "{}";
+export function parseClassification(text: string | null | undefined): {
+  category: string;
+  confidence: number;
+  reasoning: string;
+} {
   // Strip markdown code fences if present
-  const clean = text.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+  const clean = (text ?? "{}").replace(/```json?\n?/g, "").replace(/```/g, "").trim();
 
   try {
     const parsed = JSON.parse(clean);
@@ -90,9 +86,18 @@ ${query}`;
 }
 
 /**
- * Generate a grounded customer support response using Gemini.
+ * Classify a customer support query using Gemini.
  */
-export async function generateSupportResponse({
+export async function classifyCustomerQuery(query: string): Promise<{
+  category: string;
+  confidence: number;
+  reasoning: string;
+}> {
+  const result = await generateContent(buildClassifyPrompt(query));
+  return parseClassification(result.text);
+}
+
+export function buildSupportPrompt({
   customerQuery,
   knowledgeChunks,
   shopName,
@@ -102,13 +107,13 @@ export async function generateSupportResponse({
   knowledgeChunks: Array<{ title: string; content: string }>;
   shopName: string;
   category: string;
-}): Promise<{ response: string; isGrounded: boolean; hasUnsupportedClaims: boolean }> {
+}) {
   const knowledgeContext =
     knowledgeChunks.length > 0
       ? knowledgeChunks.map((c, i) => `[Source ${i + 1}: ${c.title}]\n${c.content}`).join("\n\n")
       : "No specific knowledge articles available for this query.";
 
-  const prompt = `You are a friendly and professional customer support agent for ${shopName}.
+  return `You are a friendly and professional customer support agent for ${shopName}.
 
 RULES:
 1. Answer ONLY based on the provided knowledge sources. Do not invent policies or facts.
@@ -122,14 +127,21 @@ ${knowledgeContext}
 
 Customer issue (category: ${category}):
 ${customerQuery}`;
+}
 
-  const result = await generateContent(prompt);
-
-  const text = result.text ?? "";
-  const isGrounded = knowledgeChunks.length > 0;
+/**
+ * Generate a grounded customer support response using Gemini.
+ */
+export async function generateSupportResponse(args: Parameters<typeof buildSupportPrompt>[0]): Promise<{
+  response: string;
+  isGrounded: boolean;
+  hasUnsupportedClaims: boolean;
+}> {
+  const result = await generateContent(buildSupportPrompt(args));
+  const isGrounded = args.knowledgeChunks.length > 0;
 
   return {
-    response: text,
+    response: result.text ?? "",
     isGrounded,
     hasUnsupportedClaims: !isGrounded,
   };

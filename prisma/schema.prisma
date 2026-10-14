@@ -133,6 +133,7 @@ model Shop {
   knowledgeGaps      KnowledgeGap[]
   aiFeedbacks        AIFeedback[]
   aiSetting          AISetting?
+  aiProviders        AIProviderConfig[]
   automationRules    AutomationRule[]
   incidents          Incident[]
   actionPolicies     ActionPolicy[]
@@ -680,3 +681,20 @@ model ActionExecution {
 }
 
 
+
+model AIProviderConfig {
+  id              String   @id @default(cuid())
+  shopId          String
+  shop            Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  provider        String
+  model           String
+  apiKeyEncrypted String
+  isEnabled       Boolean  @default(true)
+  // Lower number = tried first. Providers are tried in order until one succeeds.
+  priority        Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([shopId, provider])
+  @@index([shopId, priority])
+}

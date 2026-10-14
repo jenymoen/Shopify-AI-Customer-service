@@ -16,6 +16,19 @@ export function getAnthropicClient(): Anthropic {
 export const DEFAULT_MODEL = "claude-sonnet-4-5";
 
 /**
+ * Free-form text generation, used by the ticket reply orchestrator.
+ */
+export async function generateText(prompt: string): Promise<string | null> {
+  const response = await getAnthropicClient().messages.create({
+    model: DEFAULT_MODEL,
+    max_tokens: 1024,
+    messages: [{ role: "user", content: prompt }],
+  });
+  const block = response.content.find((c) => c.type === "text");
+  return block && block.type === "text" ? block.text.trim() || null : null;
+}
+
+/**
  * Classify a customer support query into a category with confidence.
  */
 export async function classifyCustomerQuery(query: string): Promise<{

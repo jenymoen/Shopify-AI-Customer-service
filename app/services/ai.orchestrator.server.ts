@@ -3,6 +3,8 @@ import { AIExecutionDecision } from "@prisma/client";
 import { appConfig } from "../lib/config.server";
 import { getActiveAiInstructionsForShop, searchKnowledgeForTicket } from "./knowledge.service.server";
 import { generateText as generateGeminiText } from "./ai.gemini.server";
+import { generateText as generateAnthropicText } from "./ai.anthropic.server";
+import { generateTextWithShopProviders } from "./ai.providers.server";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -95,6 +97,11 @@ function detectLanguage(text: string): "no" | "en" {
 
 // ── Context retrieval ─────────────────────────────────────────────────────────
 
+function looksLikeCode(text: string) {
+  const head = text.slice(0, 400);
+  return /:root\s*\{|--[a-z-]+\s*:\s*#[0-9a-f]{3,8}|<style|function\s*\(|\{\s*margin|[a-z-]+\s*:\s*[^;\s]+;\s*[a-z-]+\s*:/i.test(head);
+}
+
 async function retrieveContext(shopId: string, query: string): Promise<OrchestratorContext> {
   const [activeInstructions, knowledgeMatches] = await Promise.all([
     getActiveAiInstructionsForShop(shopId),
@@ -107,7 +114,8 @@ async function retrieveContext(shopId: string, query: string): Promise<Orchestra
       type: i.type,
       content: i.content,
     })),
-    knowledgeMatches: knowledgeMatches.map((m) => ({
+    // Scraped web pages sometimes leave raw CSS/JS in the index; that is noise, not knowledge.
+    knowledgeMatches: knowledgeMatches.filter((m) => !looksLikeCode(m.content)).map((m) => ({
       title: m.title,
       content: m.content,
       sourceType: m.sourceType,
@@ -118,7 +126,12 @@ async function retrieveContext(shopId: string, query: string): Promise<Orchestra
 
 // ── AI provider call ──────────────────────────────────────────────────────────
 
-async function callAIProvider(prompt: string): Promise<{ text: string; provider: string } | null> {
+async function callAIProvider(shopId: string, prompt: string): Promise<{ text: string; provider: string } | null> {
+  // Providers configured in Settings → AI providers, tried in the shop's priority order.
+  const configured = await generateTextWithShopProviders(shopId, prompt);
+  if (configured) return { text: configured.text, provider: configured.provider };
+
+  // Fall back to server-level keys from the environment.
   // Gemini first when configured (same preference as the AI test center).
   if (process.env.GEMINI_API_KEY) {
     try {
@@ -126,6 +139,15 @@ async function callAIProvider(prompt: string): Promise<{ text: string; provider:
       if (text) return { text, provider: "gemini" };
     } catch (err) {
       console.error("[ai] Gemini call failed:", err);
+    }
+  }
+
+  if (process.env.ANTHROPIC_API_KEY) {
+    try {
+      const text = await generateAnthropicText(prompt);
+      if (text) return { text, provider: "anthropic" };
+    } catch (err) {
+      console.error("[ai] Anthropic call failed:", err);
     }
   }
 
@@ -238,6 +260,7 @@ function buildConversationTranscript(messages: Array<{ body: string; senderType:
 }
 
 async function generateCandidateReply(
+  shopId: string,
   ticket: {
     subject: string;
     customer?: { firstName?: string | null; lastName?: string | null; email?: string | null } | null;
@@ -249,7 +272,7 @@ async function generateCandidateReply(
   const customerName =
     ticket.customer?.firstName || ticket.customer?.lastName
       ? [ticket.customer?.firstName, ticket.customer?.lastName].filter(Boolean).join(" ")
-      : ticket.customer?.email ?? "there";
+      : (ticket.customer?.email?.split("@")[0] ?? "there");
 
   const conversation = buildConversationTranscript(ticket.messages);
 
@@ -281,7 +304,7 @@ async function generateCandidateReply(
     .filter(Boolean)
     .join("\n");
 
-  const aiResult = await callAIProvider(prompt);
+  const aiResult = await callAIProvider(shopId, prompt);
   const aiText = aiResult?.text ?? null;
 
   // Use AI response or fall back to local template
@@ -293,9 +316,7 @@ async function generateCandidateReply(
           ``,
           `Takk for henvendelsen din om «${ticket.subject}». Vi har mottatt meldingen din og ser på saken.`,
           ``,
-          context.knowledgeMatches.length > 0
-            ? `Basert på informasjonen vi har: ${context.knowledgeMatches[0].content.slice(0, 200)}`
-            : `Vi kommer tilbake til deg med en løsning så snart som mulig.`,
+          `Vi kommer tilbake til deg med en løsning så snart som mulig.`,
           ``,
           `Takk for tålmodigheten,`,
           `Support`,
@@ -305,9 +326,7 @@ async function generateCandidateReply(
       ``,
       `Thank you for reaching out about "${ticket.subject}". I've reviewed your message and I'm here to help.`,
       ``,
-      context.knowledgeMatches.length > 0
-        ? `Based on our records: ${context.knowledgeMatches[0].content.slice(0, 200)}`
-        : `I'll look into this and get back to you with a resolution as soon as possible.`,
+      `I'll look into this and get back to you with a resolution as soon as possible.`,
       ``,
       `Thanks for your patience,`,
       `Support team`,
@@ -395,7 +414,7 @@ export async function runOrchestratorForTicket(
   const context = await retrieveContext(shopId, query);
 
   // Step 3: Generate candidate
-  const candidate = await generateCandidateReply(ticket, context, classification);
+  const candidate = await generateCandidateReply(shopId, ticket, context, classification);
 
   // Step 4: Validate
   const validation = validateCandidate(candidate, context, classification);
