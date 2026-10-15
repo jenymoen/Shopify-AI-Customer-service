@@ -14,6 +14,16 @@ const OPENAI_COMPATIBLE_URLS: Partial<Record<AIProviderId, string>> = {
   xai: "https://api.x.ai/v1/chat/completions",
 };
 
+class ProviderHttpError extends Error {
+  constructor(readonly status: number, detail: string) {
+    super(`HTTP ${status}: ${detail}`);
+  }
+}
+
+// Overloaded/unavailable servers usually recover within seconds. Quota (429) and auth errors do not.
+const RETRYABLE_STATUSES = new Set([500, 502, 503, 504]);
+const RETRY_DELAYS_MS = [1000, 3000];
+
 async function postJson(url: string, headers: Record<string, string>, body: unknown) {
   const res = await fetch(url, {
     method: "POST",
@@ -23,7 +33,7 @@ async function postJson(url: string, headers: Record<string, string>, body: unkn
   });
   if (!res.ok) {
     const detail = (await res.text()).slice(0, 300);
-    throw new Error(`HTTP ${res.status}: ${detail}`);
+    throw new ProviderHttpError(res.status, detail);
   }
   return res.json();
 }
@@ -58,6 +68,18 @@ export async function callProvider(provider: string, model: string, apiKey: stri
   return json.choices?.[0]?.message?.content?.trim() || null;
 }
 
+async function callWithRetry<T>(call: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await call();
+    } catch (err) {
+      const retryable = err instanceof ProviderHttpError && RETRYABLE_STATUSES.has(err.status);
+      if (!retryable || attempt >= RETRY_DELAYS_MS.length) throw err;
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
+    }
+  }
+}
+
 export interface ShopProviderResult {
   text: string;
   provider: string;
@@ -85,7 +107,8 @@ export async function generateTextWithShopProviders(
   const errors: string[] = [];
   for (const config of configs) {
     try {
-      const text = await callProvider(config.provider, config.model, decryptSecret(config.apiKeyEncrypted), prompt);
+      const apiKey = decryptSecret(config.apiKeyEncrypted);
+      const text = await callWithRetry(() => callProvider(config.provider, config.model, apiKey, prompt));
       if (text) return { result: { text, provider: config.provider, model: config.model }, errors };
       errors.push(`${config.provider}: empty answer`);
     } catch (err) {
