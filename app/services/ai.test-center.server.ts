@@ -77,23 +77,26 @@ export async function runAITestSimulation({
 
   // Providers from Settings → AI providers come first (priority order); server env keys are the fallback.
   // Gemini preferred, Anthropic as fallback among the env keys (see withProviderFallback).
+  let shopProviderErrors: string[] = [];
   const envFallback = <T,>(gemini: () => Promise<T>, anthropic: () => Promise<T>) => {
     if (!hasGeminiKey && !hasAnthropicKey) {
-      throw new Error("All configured AI providers failed. Check the API keys in Settings → AI providers.");
+      throw new Error(`All configured AI providers failed (${shopProviderErrors.join("; ")}). Check Settings → AI providers.`);
     }
     return withProviderFallback(hasGeminiKey, hasAnthropicKey, gemini, anthropic);
   };
   const classify = async (query: string) => {
-    const configured = hasShopProviders ? await generateTextWithShopProviders(shopId, buildClassifyPrompt(query)) : null;
-    return configured
-      ? parseClassification(configured.text)
+    const attempt = hasShopProviders ? await generateTextWithShopProviders(shopId, buildClassifyPrompt(query)) : null;
+    shopProviderErrors = attempt?.errors ?? [];
+    return attempt?.result
+      ? parseClassification(attempt.result.text)
       : envFallback(() => classifyGemini(query), () => classifyAnthropic(query));
   };
   const generate = async (args: Parameters<typeof generateGemini>[0]) => {
-    const configured = hasShopProviders ? await generateTextWithShopProviders(shopId, buildSupportPrompt(args)) : null;
-    if (configured) {
+    const attempt = hasShopProviders ? await generateTextWithShopProviders(shopId, buildSupportPrompt(args)) : null;
+    shopProviderErrors = attempt?.errors ?? [];
+    if (attempt?.result) {
       const isGrounded = args.knowledgeChunks.length > 0;
-      return { response: configured.text, isGrounded, hasUnsupportedClaims: !isGrounded };
+      return { response: attempt.result.text, isGrounded, hasUnsupportedClaims: !isGrounded };
     }
     return envFallback(() => generateGemini(args), () => generateAnthropic(args));
   };

@@ -4,7 +4,7 @@ import { appConfig } from "../lib/config.server";
 import { getActiveAiInstructionsForShop, searchKnowledgeForTicket } from "./knowledge.service.server";
 import { generateText as generateGeminiText } from "./ai.gemini.server";
 import { generateText as generateAnthropicText } from "./ai.anthropic.server";
-import { generateTextWithShopProviders } from "./ai.providers.server";
+import { callProvider, generateTextWithShopProviders } from "./ai.providers.server";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -28,6 +28,8 @@ export interface CandidateReply {
   text: string;
   sourceReferences: string[];
   model: string;
+  // Providers that failed before this reply was produced (all of them when the local template is used).
+  providerErrors: string[];
 }
 
 export interface ValidationResult {
@@ -126,100 +128,62 @@ async function retrieveContext(shopId: string, query: string): Promise<Orchestra
 
 // ── AI provider call ──────────────────────────────────────────────────────────
 
-async function callAIProvider(shopId: string, prompt: string): Promise<{ text: string; provider: string } | null> {
+interface AIProviderAnswer {
+  text: string | null;
+  provider: string | null;
+  // Why providers were skipped, shown to the agent when the local template is used instead.
+  errors: string[];
+}
+
+function errorMessage(err: unknown) {
+  return (err instanceof Error ? err.message : String(err)).slice(0, 300);
+}
+
+async function callAIProvider(shopId: string, prompt: string): Promise<AIProviderAnswer> {
   // Providers configured in Settings → AI providers, tried in the shop's priority order.
-  const configured = await generateTextWithShopProviders(shopId, prompt);
-  if (configured) return { text: configured.text, provider: configured.provider };
+  const { result, errors } = await generateTextWithShopProviders(shopId, prompt);
+  if (result) return { text: result.text, provider: result.provider, errors };
 
   // Fall back to server-level keys from the environment.
-  // Gemini first when configured (same preference as the AI test center).
   if (process.env.GEMINI_API_KEY) {
     try {
       const text = await generateGeminiText(prompt);
-      if (text) return { text, provider: "gemini" };
+      if (text) return { text, provider: "gemini", errors };
+      errors.push("gemini (env): empty answer");
     } catch (err) {
       console.error("[ai] Gemini call failed:", err);
+      errors.push(`gemini (env): ${errorMessage(err)}`);
     }
   }
 
   if (process.env.ANTHROPIC_API_KEY) {
     try {
       const text = await generateAnthropicText(prompt);
-      if (text) return { text, provider: "anthropic" };
+      if (text) return { text, provider: "anthropic", errors };
+      errors.push("anthropic (env): empty answer");
     } catch (err) {
       console.error("[ai] Anthropic call failed:", err);
+      errors.push(`anthropic (env): ${errorMessage(err)}`);
     }
   }
 
-  if (!appConfig.AI_API_KEY) {
-    // Return null so the local fallback is used
-    return null;
-  }
-
-  if (appConfig.AI_PROVIDER === "anthropic") {
+  // Legacy single-provider setup (AI_PROVIDER / AI_API_KEY).
+  const legacyModel = { anthropic: "claude-opus-4-5", openai: "gpt-4o" }[appConfig.AI_PROVIDER];
+  if (appConfig.AI_API_KEY && legacyModel) {
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "x-api-key": appConfig.AI_API_KEY,
-          "anthropic-version": "2023-06-01",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "claude-opus-4-5",
-          max_tokens: 1024,
-          messages: [{ role: "user", content: prompt }],
-        }),
-      });
-
-      if (!res.ok) {
-        console.error("[ai] Anthropic API error:", res.status, await res.text());
-        return null;
-      }
-
-      const json = (await res.json()) as {
-        content?: Array<{ type: string; text: string }>;
-      };
-      const text = json.content?.find((c) => c.type === "text")?.text;
-      return text ? { text, provider: "anthropic" } : null;
+      const text = await callProvider(appConfig.AI_PROVIDER, legacyModel, appConfig.AI_API_KEY, prompt);
+      if (text) return { text, provider: appConfig.AI_PROVIDER, errors };
+      errors.push(`${appConfig.AI_PROVIDER} (env): empty answer`);
     } catch (err) {
-      console.error("[ai] Anthropic call failed:", err);
-      return null;
+      console.error(`[ai] ${appConfig.AI_PROVIDER} call failed:`, err);
+      errors.push(`${appConfig.AI_PROVIDER} (env): ${errorMessage(err)}`);
     }
   }
 
-  if (appConfig.AI_PROVIDER === "openai") {
-    try {
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${appConfig.AI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "gpt-4o",
-          max_tokens: 1024,
-          messages: [{ role: "user", content: prompt }],
-        }),
-      });
-
-      if (!res.ok) {
-        console.error("[ai] OpenAI API error:", res.status, await res.text());
-        return null;
-      }
-
-      const json = (await res.json()) as {
-        choices?: Array<{ message?: { content?: string } }>;
-      };
-      const text = json.choices?.[0]?.message?.content;
-      return text ? { text, provider: "openai" } : null;
-    } catch (err) {
-      console.error("[ai] OpenAI call failed:", err);
-      return null;
-    }
+  if (errors.length === 0) {
+    errors.push("No AI provider is configured. Add one under Settings → AI providers.");
   }
-
-  return null;
+  return { text: null, provider: null, errors };
 }
 
 // ── Candidate reply generation ────────────────────────────────────────────────
@@ -305,7 +269,7 @@ async function generateCandidateReply(
     .join("\n");
 
   const aiResult = await callAIProvider(shopId, prompt);
-  const aiText = aiResult?.text ?? null;
+  const aiText = aiResult.text;
 
   // Use AI response or fall back to local template
   const finalText =
@@ -335,7 +299,8 @@ async function generateCandidateReply(
   return {
     text: finalText,
     sourceReferences: context.knowledgeMatches.map((m) => m.title),
-    model: aiResult?.provider ?? "local-template",
+    model: aiResult.provider ?? "local-template",
+    providerErrors: aiResult.errors,
   };
 }
 
@@ -444,6 +409,7 @@ export async function runOrchestratorForTicket(
     suggestedReply: candidate.text,
     sourceReferences: candidate.sourceReferences,
     model: candidate.model,
+    providerErrors: candidate.providerErrors,
     validation: {
       isGrounded: validation.isGrounded,
       hasUnsupportedClaims: validation.hasUnsupportedClaims,

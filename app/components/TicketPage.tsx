@@ -638,6 +638,25 @@ export function TicketPage() {
                   {ticket.aiSuggestion}
                 </div>
 
+                {ticket.aiModel === "local-template" ? (
+                  <div
+                    style={{
+                      backgroundColor: "#fffbeb",
+                      border: "1px solid #fcd34d",
+                      color: "#92400e",
+                      borderRadius: "8px",
+                      padding: "10px 12px",
+                      fontSize: "13px",
+                      marginBottom: "16px",
+                    }}
+                  >
+                    <strong>No AI provider answered, so this is the standard template.</strong>
+                    {ticket.aiProviderErrors.map((message: string) => (
+                      <div key={message} style={{ overflowWrap: "anywhere" }}>{message}</div>
+                    ))}
+                  </div>
+                ) : null}
+
                 <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
                 <Form method="post">
                   <input type="hidden" name="intent" value="approve-ai" />

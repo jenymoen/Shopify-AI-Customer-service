@@ -28,7 +28,7 @@ async function postJson(url: string, headers: Record<string, string>, body: unkn
   return res.json();
 }
 
-async function callProvider(provider: string, model: string, apiKey: string, prompt: string): Promise<string | null> {
+export async function callProvider(provider: string, model: string, apiKey: string, prompt: string): Promise<string | null> {
   if (provider === "anthropic") {
     const json = (await postJson(
       "https://api.anthropic.com/v1/messages",
@@ -70,27 +70,30 @@ export async function hasEnabledShopProviders(shopId: string) {
 
 /**
  * Tries the shop's enabled providers in priority order and returns the first
- * successful answer. Returns null when none are configured or all of them fail.
+ * successful answer. `result` is null when none are configured or all of them
+ * fail; `errors` then says why, one entry per provider.
  */
 export async function generateTextWithShopProviders(
   shopId: string,
   prompt: string,
-): Promise<ShopProviderResult | null> {
+): Promise<{ result: ShopProviderResult | null; errors: string[] }> {
   const configs = await db.aIProviderConfig.findMany({
     where: { shopId, isEnabled: true },
     orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
   });
 
+  const errors: string[] = [];
   for (const config of configs) {
     try {
       const text = await callProvider(config.provider, config.model, decryptSecret(config.apiKeyEncrypted), prompt);
-      if (text) return { text, provider: config.provider, model: config.model };
-      console.warn(`[ai] ${config.provider} returned an empty answer, trying next provider`);
+      if (text) return { result: { text, provider: config.provider, model: config.model }, errors };
+      errors.push(`${config.provider}: empty answer`);
     } catch (err) {
       console.error(`[ai] ${config.provider} (${config.model}) failed, trying next provider:`, err);
+      errors.push(`${config.provider}: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300));
     }
   }
-  return null;
+  return { result: null, errors };
 }
 
 /** Sends a tiny request to verify a key/model pair. Returns an error message, or null when it works. */

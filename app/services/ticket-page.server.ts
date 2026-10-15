@@ -195,6 +195,13 @@ export async function loadTicketPage(ticketId: string, session: TicketPageSessio
       ? String((latestAiExecution.result as { suggestedReply?: string }).suggestedReply ?? "")
       : "";
 
+  const rawProviderErrors =
+    typeof latestAiExecution?.result === "object" && latestAiExecution.result !== null && "providerErrors" in latestAiExecution.result
+      ? (latestAiExecution.result as { providerErrors?: unknown }).providerErrors
+      : [];
+  const aiProviderErrors = Array.isArray(rawProviderErrors) ? rawProviderErrors.map(String) : [];
+  const aiModel = latestAiExecution?.model ?? null;
+
   const isFollowing = ticket.followers.some((follower) => follower.userId === session.userId);
 
   return {
@@ -224,6 +231,8 @@ export async function loadTicketPage(ticketId: string, session: TicketPageSessio
       actorName: entry.actorUser?.name ?? entry.actorUser?.email ?? "System",
     })),
     aiSuggestion,
+    aiProviderErrors,
+    aiModel,
     activeInstructions: activeInstructions.map((instruction: { id: string; name: string; type: string; content: string }) => ({
       id: instruction.id,
       name: instruction.name,
