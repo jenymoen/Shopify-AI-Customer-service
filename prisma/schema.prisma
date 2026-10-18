@@ -134,6 +134,7 @@ model Shop {
   aiFeedbacks        AIFeedback[]
   aiSetting          AISetting?
   aiProviders        AIProviderConfig[]
+  sharedFiles        SharedFile[]
   automationRules    AutomationRule[]
   incidents          Incident[]
   actionPolicies     ActionPolicy[]
@@ -697,4 +698,19 @@ model AIProviderConfig {
 
   @@unique([shopId, provider])
   @@index([shopId, priority])
+}
+
+// Shop-wide file library. Files can be attached to ticket replies; the bytes live in the database.
+model SharedFile {
+  id               String   @id @default(cuid())
+  shopId           String
+  shop             Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  filename         String
+  contentType      String
+  sizeBytes        Int
+  data             Bytes
+  uploadedByUserId String?
+  createdAt        DateTime @default(now())
+
+  @@index([shopId, createdAt])
 }

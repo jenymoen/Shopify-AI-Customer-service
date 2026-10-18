@@ -15,6 +15,7 @@ import { runOrchestratorForTicket } from "./ai.orchestrator.server";
 import { logAuditEvent } from "./audit.service.server";
 import { recordAgentFeedback, recordSentAiSuggestion } from "./ai.feedback-gap.server";
 import { sendReplyToCustomer } from "./email.service.server";
+import { listSharedFiles, loadFilesForReply } from "./shared-files.server";
 import { getActionRegistry, proposeAction } from "./actions.service.server";
 
 /** Who is acting on the ticket. Resolved by the caller (portal cookie or Shopify admin auth). */
@@ -203,6 +204,12 @@ export async function loadTicketPage(ticketId: string, session: TicketPageSessio
   const aiProviderErrors = Array.isArray(rawProviderErrors) ? rawProviderErrors.map(String) : [];
   const aiModel = latestAiExecution?.model ?? null;
 
+  const sharedFiles = (await listSharedFiles(session.shopId)).map((f) => ({
+    id: f.id,
+    filename: f.filename,
+    sizeBytes: f.sizeBytes,
+  }));
+
   const isFollowing = ticket.followers.some((follower) => follower.userId === session.userId);
 
   return {
@@ -233,6 +240,7 @@ export async function loadTicketPage(ticketId: string, session: TicketPageSessio
     })),
     aiSuggestion,
     aiProviderErrors,
+    sharedFiles,
     aiModel,
     activeInstructions: activeInstructions.map((instruction: { id: string; name: string; type: string; content: string }) => ({
       id: instruction.id,
@@ -427,6 +435,19 @@ export async function handleTicketPageAction(
   if (finalMessage) {
     const user = await db.user.findUnique({ where: { id: session.userId } });
 
+    let sharedFiles: Awaited<ReturnType<typeof loadFilesForReply>>;
+    try {
+      sharedFiles = await loadFilesForReply(
+        session.shopId,
+        formData.getAll("sharedFileIds").map(String).filter(Boolean),
+      );
+    } catch (error) {
+      return data<TicketActionError>(
+        { sendError: error instanceof Error ? error.message : "Could not attach the selected files." },
+        { status: 400 },
+      );
+    }
+
     // Deliver first: a reply that failed to send must not show up as sent on the ticket.
     let outbound: { messageId: string; inReplyTo: string | null; references: string | null } | null = null;
     const customerEmail = ticket.customer?.email?.trim().toLowerCase();
@@ -459,6 +480,7 @@ export async function handleTicketPageAction(
           inReplyTo,
           references,
           actorUserId: session.userId,
+          attachments: sharedFiles.map((f) => ({ filename: f.filename, contentType: f.contentType, data: f.data })),
         });
         outbound = { messageId, inReplyTo, references };
       } catch (error) {
@@ -470,7 +492,7 @@ export async function handleTicketPageAction(
       }
     }
 
-    await createTicketMessage({
+    const sentMessage = await createTicketMessage({
       ticketId: ticket.id,
       body: finalMessage,
       senderUserId: user?.id ?? null,
@@ -480,6 +502,19 @@ export async function handleTicketPageAction(
       inReplyTo: outbound?.inReplyTo,
       references: outbound?.references,
     });
+
+    if (sharedFiles.length > 0) {
+      await db.attachment.createMany({
+        data: sharedFiles.map((f) => ({
+          ticketId: ticket.id,
+          messageId: sentMessage.id,
+          filename: f.filename,
+          contentType: f.contentType,
+          storageKey: `shared:${f.id}`,
+          sizeBytes: f.sizeBytes,
+        })),
+      });
+    }
 
     if (intent === "approve-ai") {
       await recordSentAiSuggestion({ shopId: session.shopId, ticketId: ticket.id, userId: session.userId, finalText: finalMessage });

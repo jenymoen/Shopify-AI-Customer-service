@@ -185,6 +185,30 @@ function AttachmentViewer({ attachment, onClose }: { attachment: TicketAttachmen
   );
 }
 
+// Checkboxes for attaching shared library files to a reply. `form` ties them to a form outside their DOM parent.
+function SharedFilePicker({ files, form }: { files: Array<{ id: string; filename: string; sizeBytes: number }>; form?: string }) {
+  return (
+    <details style={{ marginBottom: "16px", fontSize: "13px", color: "#334155" }}>
+      <summary style={{ cursor: "pointer", fontWeight: 600 }}>📎 Attach shared files</summary>
+      {files.length === 0 ? (
+        <div style={{ marginTop: "8px", color: "#64748b" }}>
+          No shared files yet. Upload some under Settings → Shared files.
+        </div>
+      ) : (
+        <div style={{ marginTop: "8px", display: "grid", gap: "6px" }}>
+          {files.map((file) => (
+            <label key={file.id} style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+              <input type="checkbox" name="sharedFileIds" value={file.id} form={form} />
+              <span style={{ overflowWrap: "anywhere" }}>{file.filename}</span>
+              <span style={{ color: "#64748b" }}>({formatFileSize(file.sizeBytes)})</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </details>
+  );
+}
+
 function AttachmentList({ attachments }: { attachments: TicketAttachment[] }) {
   const [open, setOpen] = useState<TicketAttachment | null>(null);
   if (attachments.length === 0) return null;
@@ -646,6 +670,7 @@ export function TicketPage() {
                 <div style={{ fontSize: "12px", color: "#166534", marginBottom: "16px" }}>
                   You can edit the reply before sending. The version you send is saved and used to improve future AI replies.
                 </div>
+                <SharedFilePicker files={ticket.sharedFiles} form="approve-ai-form" />
 
                 {ticket.aiModel === "local-template" ? (
                   <div
@@ -772,6 +797,8 @@ export function TicketPage() {
                     }}
                   />
                 </div>
+
+                <SharedFilePicker files={ticket.sharedFiles} />
 
                 {ticket.canManageInternalNotes ? (
                   <div style={{ marginBottom: "16px" }}>

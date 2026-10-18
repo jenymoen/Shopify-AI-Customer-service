@@ -20,6 +20,11 @@ export default function SettingsIndexPage() {
         </s-paragraph>
         <s-link href="/app/settings/ai">Open AI provider settings</s-link>
       </s-section>
+
+      <s-section heading="Shared files">
+        <s-paragraph>Upload files once and attach them to replies on any ticket.</s-paragraph>
+        <s-link href="/app/settings/files">Open shared files</s-link>
+      </s-section>
     </s-page>
   );
 }

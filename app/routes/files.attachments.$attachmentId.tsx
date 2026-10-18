@@ -1,4 +1,5 @@
 import type { LoaderFunctionArgs } from "react-router";
+import db from "../db.server";
 import { findAttachmentForSignedLink, previewKind } from "../services/attachment-access.server";
 
 // Resource route: streams one stored attachment. Access is granted by the signed link only.
@@ -10,6 +11,23 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     url.searchParams.get("sig"),
   );
   if (!attachment) return new Response("This link is invalid or has expired. Reload the ticket.", { status: 403 });
+
+  const kind = previewKind(attachment.contentType);
+  const inline = kind !== null && url.searchParams.get("download") !== "1";
+  const asciiName = attachment.filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+  const headers = {
+    "Content-Type": kind ? attachment.contentType : "application/octet-stream",
+    "Content-Disposition": `${inline ? "inline" : "attachment"}; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`,
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "private, max-age=300",
+  };
+
+  // storageKey "shared:<library file id>": a file from the shop's library, stored in the database.
+  if (attachment.storageKey.startsWith("shared:")) {
+    const shared = await db.sharedFile.findUnique({ where: { id: attachment.storageKey.slice("shared:".length) } });
+    if (!shared) return new Response("This file was deleted from the library.", { status: 404 });
+    return new Response(new Uint8Array(shared.data), { headers });
+  }
 
   // storageKey: "resend:<received email id>:<attachment id>"
   const [provider, emailId, providerAttachmentId] = attachment.storageKey.split(":");
@@ -32,16 +50,5 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const file = await fetch(downloadUrl);
   if (!file.ok || !file.body) return new Response("Could not fetch the file.", { status: 502 });
 
-  const kind = previewKind(attachment.contentType);
-  const inline = kind !== null && url.searchParams.get("download") !== "1";
-  const asciiName = attachment.filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
-
-  return new Response(file.body, {
-    headers: {
-      "Content-Type": kind ? attachment.contentType : "application/octet-stream",
-      "Content-Disposition": `${inline ? "inline" : "attachment"}; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`,
-      "X-Content-Type-Options": "nosniff",
-      "Cache-Control": "private, max-age=300",
-    },
-  });
+  return new Response(file.body, { headers });
 };

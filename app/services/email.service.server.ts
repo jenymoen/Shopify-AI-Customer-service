@@ -16,6 +16,7 @@ export interface SendReplyOptions {
   inReplyTo?: string | null;
   references?: string | null;
   actorUserId?: string | null;
+  attachments?: Array<{ filename: string; contentType: string; data: Uint8Array }>;
 }
 
 export async function sendReplyToCustomer(options: SendReplyOptions): Promise<{ messageId: string }> {
@@ -48,6 +49,7 @@ export async function sendReplyToCustomer(options: SendReplyOptions): Promise<{ 
       subject: options.subject,
       messageId,
       provider: appConfig.EMAIL_PROVIDER,
+      attachmentCount: options.attachments?.length ?? 0,
     },
     ticketId: options.ticketId,
   });
@@ -105,6 +107,15 @@ async function sendViaPostmark(options: SendReplyOptions, messageId: string): Pr
       ...(options.references ? [{ Name: "References", Value: options.references }] : []),
     ],
     MessageStream: "outbound",
+    ...(options.attachments?.length
+      ? {
+          Attachments: options.attachments.map((a) => ({
+            Name: a.filename,
+            Content: Buffer.from(a.data).toString("base64"),
+            ContentType: a.contentType,
+          })),
+        }
+      : {}),
   };
 
   const res = await fetch("https://api.postmarkapp.com/email", {
@@ -126,6 +137,14 @@ async function sendViaResend(options: SendReplyOptions, messageId: string): Prom
     subject: options.subject,
     text: options.bodyText,
     ...(options.bodyHtml ? { html: options.bodyHtml } : {}),
+    ...(options.attachments?.length
+      ? {
+          attachments: options.attachments.map((a) => ({
+            filename: a.filename,
+            content: Buffer.from(a.data).toString("base64"),
+          })),
+        }
+      : {}),
     headers: {
       "Message-ID": messageId,
       ...(options.inReplyTo ? { "In-Reply-To": options.inReplyTo } : {}),
