@@ -621,8 +621,16 @@ export function TicketPage() {
                   </span>
                 </div>
 
-                <div
+                <textarea
+                  key={ticket.aiSuggestion}
+                  name="aiSuggestion"
+                  form="approve-ai-form"
+                  defaultValue={ticket.aiSuggestion}
+                  rows={Math.min(18, Math.max(8, ticket.aiSuggestion.split("\n").length + 2))}
+                  aria-label="AI suggested reply (editable)"
                   style={{
+                    width: "100%",
+                    boxSizing: "border-box",
                     backgroundColor: "#ffffff",
                     padding: "16px",
                     borderRadius: "8px",
@@ -630,12 +638,13 @@ export function TicketPage() {
                     fontSize: "14px",
                     lineHeight: "1.6",
                     color: "#0f172a",
-                    whiteSpace: "pre-wrap",
-                    overflowWrap: "anywhere",
-                    marginBottom: "16px",
+                    fontFamily: "inherit",
+                    resize: "vertical",
+                    marginBottom: "8px",
                   }}
-                >
-                  {ticket.aiSuggestion}
+                />
+                <div style={{ fontSize: "12px", color: "#166534", marginBottom: "16px" }}>
+                  You can edit the reply before sending. The version you send is saved and used to improve future AI replies.
                 </div>
 
                 {ticket.aiModel === "local-template" ? (
@@ -658,9 +667,8 @@ export function TicketPage() {
                 ) : null}
 
                 <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
-                <Form method="post">
+                <Form method="post" id="approve-ai-form">
                   <input type="hidden" name="intent" value="approve-ai" />
-                  <input type="hidden" name="aiSuggestion" value={ticket.aiSuggestion} />
                   <button
                     type="submit"
                     style={{
@@ -678,7 +686,7 @@ export function TicketPage() {
                       boxShadow: "0 2px 6px rgba(22, 163, 74, 0.2)",
                     }}
                   >
-                    ✨ Approve &amp; Send to Customer
+                    ✨ Send to Customer
                   </button>
                 </Form>
                 <Form method="post">

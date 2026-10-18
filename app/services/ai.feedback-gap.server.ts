@@ -35,7 +35,7 @@ export async function recordAgentFeedback({
   shopId: string;
   aiExecutionId: string;
   userId?: string;
-  rating: "POSITIVE" | "NEGATIVE";
+  rating: "POSITIVE" | "NEGATIVE" | "EDITED";
   comment?: string;
   candidateText?: string;
   finalText?: string;
@@ -111,4 +111,43 @@ export async function resolveKnowledgeGap(gapId: string) {
     where: { id: gapId },
     data: { status: "RESOLVED" },
   });
+}
+
+/**
+ * Called when an agent sends the AI suggestion. The text that was actually sent
+ * (edited or not) is stored as feedback so later replies can learn from it.
+ */
+export async function recordSentAiSuggestion({
+  shopId,
+  ticketId,
+  userId,
+  finalText,
+}: {
+  shopId: string;
+  ticketId: string;
+  userId: string;
+  finalText: string;
+}) {
+  const execution = await db.aIExecution.findFirst({
+    where: { shopId, ticketId, status: "COMPLETED" },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!execution) return;
+
+  const candidateText =
+    typeof execution.result === "object" && execution.result !== null && "suggestedReply" in execution.result
+      ? String((execution.result as { suggestedReply?: unknown }).suggestedReply ?? "")
+      : "";
+  const wasEdited = candidateText.trim() !== finalText.trim();
+
+  await recordAgentFeedback({
+    shopId,
+    aiExecutionId: execution.id,
+    userId,
+    // Unchanged = the agent accepted it as is. Edited replies are kept apart so they do not skew the positive share.
+    rating: wasEdited ? "EDITED" : "POSITIVE",
+    candidateText,
+    finalText,
+  });
+  await db.aIExecution.update({ where: { id: execution.id }, data: { status: "SENT" } });
 }

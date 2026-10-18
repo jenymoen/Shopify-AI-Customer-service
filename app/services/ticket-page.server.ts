@@ -13,6 +13,7 @@ import { getActiveAiInstructionsForShop, searchKnowledgeForTicket } from "./know
 import { lookupShopifyCustomerByEmail, lookupShopifyOrdersByEmail } from "./shopify-context.service.server";
 import { runOrchestratorForTicket } from "./ai.orchestrator.server";
 import { logAuditEvent } from "./audit.service.server";
+import { recordAgentFeedback, recordSentAiSuggestion } from "./ai.feedback-gap.server";
 import { sendReplyToCustomer } from "./email.service.server";
 import { getActionRegistry, proposeAction } from "./actions.service.server";
 
@@ -173,7 +174,7 @@ export async function loadTicketPage(ticketId: string, session: TicketPageSessio
       orderBy: [{ user: { email: "asc" } }],
     }),
     db.aIExecution.findFirst({
-      where: { ticketId: ticketId, shopId: session.shopId, status: { not: "DISMISSED" } },
+      where: { ticketId: ticketId, shopId: session.shopId, status: { notIn: ["DISMISSED", "SENT"] } },
       orderBy: { createdAt: "desc" },
     }),
     getActiveAiInstructionsForShop(session.shopId),
@@ -363,6 +364,20 @@ export async function handleTicketPageAction(
   }
 
   if (intent === "dismiss-ai") {
+    // Discarding is a negative signal for the dashboard rating.
+    const discarded = await db.aIExecution.findFirst({
+      where: { ticketId: ticket.id, shopId: session.shopId, status: "COMPLETED" },
+      orderBy: { createdAt: "desc" },
+    });
+    if (discarded) {
+      await recordAgentFeedback({
+        shopId: session.shopId,
+        aiExecutionId: discarded.id,
+        userId: session.userId,
+        rating: "NEGATIVE",
+        comment: "Suggestion discarded",
+      });
+    }
     // Hides the suggestion; the execution row stays for the dashboard stats.
     await db.aIExecution.updateMany({
       where: { ticketId: ticket.id, shopId: session.shopId, status: "COMPLETED" },
@@ -465,6 +480,10 @@ export async function handleTicketPageAction(
       inReplyTo: outbound?.inReplyTo,
       references: outbound?.references,
     });
+
+    if (intent === "approve-ai") {
+      await recordSentAiSuggestion({ shopId: session.shopId, ticketId: ticket.id, userId: session.userId, finalText: finalMessage });
+    }
 
     await logAuditEvent({
       shopId: session.shopId,

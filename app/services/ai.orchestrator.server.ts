@@ -223,9 +223,46 @@ function buildConversationTranscript(messages: Array<{ body: string; senderType:
   return (omitted > 0 ? [`(${omitted} earlier message(s) omitted)`, ...kept] : kept).join("\n\n");
 }
 
+const MAX_EXAMPLES = 3;
+
+// Replies that agents sent (as is or edited) are the best guide to how this store wants to answer.
+// Same-category examples come first, edited ones before untouched ones, newest first within that.
+async function loadApprovedReplyExamples(shopId: string, ticketId: string, category: string) {
+  const feedback = await db.aIFeedback.findMany({
+    where: { shopId, finalText: { not: null }, rating: { in: ["EDITED", "POSITIVE"] }, aiExecution: { ticketId: { not: ticketId } } },
+    orderBy: { createdAt: "desc" },
+    take: 40,
+    include: { aiExecution: { select: { ticketId: true, createdAt: true, prompt: true } } },
+  });
+
+  const exampleCategory = (f: (typeof feedback)[number]) =>
+    (f.aiExecution.prompt as { classification?: { category?: string } } | null)?.classification?.category;
+  const rank = (f: (typeof feedback)[number]) =>
+    (exampleCategory(f) === category ? 0 : 2) + (f.rating === "EDITED" ? 0 : 1);
+  const picked = [...feedback].sort((a, b) => rank(a) - rank(b)).slice(0, MAX_EXAMPLES);
+
+  const examples: Array<{ customerMessage: string; reply: string }> = [];
+  for (const f of picked) {
+    const incoming = f.aiExecution.ticketId
+      ? await db.ticketMessage.findFirst({
+          where: { ticketId: f.aiExecution.ticketId, isIncoming: true, createdAt: { lte: f.aiExecution.createdAt } },
+          orderBy: { createdAt: "desc" },
+          select: { body: true },
+        })
+      : null;
+    if (!incoming || !f.finalText) continue;
+    examples.push({
+      customerMessage: stripQuotedText(incoming.body).slice(0, 600),
+      reply: f.finalText.slice(0, 1200),
+    });
+  }
+  return examples;
+}
+
 async function generateCandidateReply(
   shopId: string,
   ticket: {
+    id: string;
     subject: string;
     customer?: { firstName?: string | null; lastName?: string | null; email?: string | null } | null;
     messages: Array<{ body: string; senderType: string; isIncoming: boolean }>;
@@ -248,6 +285,14 @@ async function generateCandidateReply(
     .map((i) => `${i.type} — ${i.name}: ${i.content}`)
     .join("\n");
 
+  const examples = await loadApprovedReplyExamples(shopId, ticket.id, classification.category).catch((err) => {
+    console.error("[ai] could not load approved reply examples:", err);
+    return [];
+  });
+  const examplesContext = examples
+    .map((e) => `Customer: ${e.customerMessage}\nApproved reply: ${e.reply}`)
+    .join("\n\n---\n\n");
+
   const prompt = [
     `You are a customer support agent responding on behalf of an online store.`,
     ``,
@@ -258,6 +303,9 @@ async function generateCandidateReply(
     ``,
     instructionsContext ? `STORE POLICIES:\n${instructionsContext}` : "",
     knowledgeContext ? `RELEVANT KNOWLEDGE:\n${knowledgeContext}` : "",
+    examplesContext
+      ? `REPLIES PREVIOUSLY APPROVED BY THIS STORE'S AGENTS (match their tone, wording and level of detail; do not copy facts that do not apply to this ticket):\n${examplesContext}`
+      : "",
     ``,
     `FULL CONVERSATION (oldest first):\n${conversation}`,
     ``,
