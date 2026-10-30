@@ -1,0 +1,151 @@
+{%- liquid
+  assign form_id = 'cf-' | append: block.id
+  assign app_url = 'https://shopify-ai-customer-service.onrender.com'
+  if block.settings.api_url_override != blank
+    assign app_url = block.settings.api_url_override | strip | remove_last: '/'
+  endif
+-%}
+
+<div class="cf" id="{{ form_id }}" {{ block.shopify_attributes }}>
+  {%- if block.settings.heading != blank -%}
+    <h2 class="cf__heading">{{ block.settings.heading }}</h2>
+  {%- endif -%}
+  {%- if block.settings.intro != blank -%}
+    <p class="cf__intro">{{ block.settings.intro }}</p>
+  {%- endif -%}
+
+  <form class="cf__form" novalidate>
+    <label class="cf__field">
+      <span>{{ block.settings.name_label }}</span>
+      <input type="text" name="name" autocomplete="name" maxlength="100">
+    </label>
+    <label class="cf__field">
+      <span>{{ block.settings.email_label }} *</span>
+      <input type="email" name="email" autocomplete="email" required maxlength="254">
+    </label>
+    {%- if block.settings.show_order_number -%}
+      <label class="cf__field">
+        <span>{{ block.settings.order_label }}</span>
+        <input type="text" name="orderNumber" maxlength="50">
+      </label>
+    {%- endif -%}
+    <label class="cf__field">
+      <span>{{ block.settings.subject_label }} *</span>
+      <input type="text" name="subject" required maxlength="200">
+    </label>
+    <label class="cf__field">
+      <span>{{ block.settings.message_label }} *</span>
+      <textarea name="message" rows="6" required maxlength="10000"></textarea>
+    </label>
+
+    {%- comment -%} Honeypot: hidden from humans, bots fill it. {%- endcomment -%}
+    <div class="cf__hp" aria-hidden="true">
+      <label>Website <input type="text" name="website" tabindex="-1" autocomplete="off"></label>
+    </div>
+
+    <button type="submit" class="cf__button">{{ block.settings.button_label }}</button>
+    <p class="cf__status" role="status" aria-live="polite"></p>
+  </form>
+</div>
+
+<style>
+  #{{ form_id }} { max-width: {{ block.settings.max_width }}px; margin: 0 auto; padding: 0 16px; }
+  #{{ form_id }} .cf__heading { margin: 0 0 8px; }
+  #{{ form_id }} .cf__intro { margin: 0 0 20px; }
+  #{{ form_id }} .cf__field { display: block; margin-bottom: 16px; }
+  #{{ form_id }} .cf__field span { display: block; margin-bottom: 6px; font-size: 0.9em; }
+  #{{ form_id }} input,
+  #{{ form_id }} textarea {
+    width: 100%; box-sizing: border-box; padding: 10px 12px; font: inherit;
+    border: 1px solid rgba(0, 0, 0, 0.3); border-radius: 4px; background: #fff; color: #000;
+  }
+  #{{ form_id }} .cf__hp { position: absolute; left: -9999px; height: 0; overflow: hidden; }
+  #{{ form_id }} .cf__button {
+    padding: 12px 28px; font: inherit; cursor: pointer; border: 0; border-radius: 4px;
+    background: {{ block.settings.button_color }}; color: {{ block.settings.button_text_color }};
+  }
+  #{{ form_id }} .cf__button[disabled] { opacity: 0.6; cursor: wait; }
+  #{{ form_id }} .cf__status { margin: 16px 0 0; }
+  #{{ form_id }} .cf__status[data-state="success"] { color: #1a7f37; }
+  #{{ form_id }} .cf__status[data-state="error"] { color: #c0392b; }
+</style>
+
+<script>
+  (function () {
+    var root = document.getElementById({{ form_id | json }});
+    var form = root.querySelector('form');
+    var button = form.querySelector('button');
+    var status = form.querySelector('.cf__status');
+    var msgs = {
+      sending: {{ block.settings.sending_text | json }},
+      success: {{ block.settings.success_text | json }},
+      error: {{ block.settings.error_text | json }},
+      invalid: {{ block.settings.invalid_text | json }}
+    };
+
+    function show(state, text) {
+      status.dataset.state = state;
+      status.textContent = text;
+    }
+
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      if (!form.checkValidity()) { show('error', msgs.invalid); return; }
+
+      var data = new FormData(form);
+      var payload = {
+        shopDomain: {{ shop.permanent_domain | json }},
+        name: data.get('name'),
+        email: data.get('email'),
+        orderNumber: data.get('orderNumber') || undefined,
+        subject: data.get('subject'),
+        message: data.get('message'),
+        website: data.get('website')
+      };
+
+      button.disabled = true;
+      show('', msgs.sending);
+
+      fetch({{ app_url | append: '/api/storefront/support' | json }}, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+        .then(function (res) { return res.json().then(function (j) { return { ok: res.ok, body: j }; }); })
+        .then(function (r) {
+          if (r.ok && r.body.success) { form.reset(); show('success', msgs.success); }
+          else { show('error', msgs.error); }
+        })
+        .catch(function () { show('error', msgs.error); })
+        .then(function () { button.disabled = false; });
+    });
+  })();
+</script>
+
+{% schema %}
+{
+  "name": "Contact form",
+  "target": "section",
+  "settings": [
+    { "type": "text", "id": "heading", "label": "Heading", "default": "Contact us" },
+    { "type": "textarea", "id": "intro", "label": "Intro text", "default": "Send us a message and we will get back to you by email." },
+    { "type": "range", "id": "max_width", "label": "Max width (px)", "min": 400, "max": 1000, "step": 20, "default": 640 },
+    { "type": "checkbox", "id": "show_order_number", "label": "Show order number field", "default": true },
+    { "type": "text", "id": "api_url_override", "label": "App URL override (testing only)", "info": "Leave empty in production. For testing, paste the tunnel URL from `shopify app dev`." },
+    { "type": "header", "content": "Colors" },
+    { "type": "color", "id": "button_color", "label": "Button", "default": "#000000" },
+    { "type": "color", "id": "button_text_color", "label": "Button text", "default": "#ffffff" },
+    { "type": "header", "content": "Labels and messages" },
+    { "type": "text", "id": "name_label", "label": "Name label", "default": "Name" },
+    { "type": "text", "id": "email_label", "label": "Email label", "default": "Email" },
+    { "type": "text", "id": "order_label", "label": "Order number label", "default": "Order number (optional)" },
+    { "type": "text", "id": "subject_label", "label": "Subject label", "default": "Subject" },
+    { "type": "text", "id": "message_label", "label": "Message label", "default": "Message" },
+    { "type": "text", "id": "button_label", "label": "Button label", "default": "Send message" },
+    { "type": "text", "id": "sending_text", "label": "Sending text", "default": "Sending…" },
+    { "type": "text", "id": "success_text", "label": "Success text", "default": "Thanks! Your message has been sent. We will reply by email." },
+    { "type": "text", "id": "error_text", "label": "Error text", "default": "Something went wrong. Please try again." },
+    { "type": "text", "id": "invalid_text", "label": "Validation text", "default": "Please fill in all required fields with a valid email." }
+  ]
+}
+{% endschema %}

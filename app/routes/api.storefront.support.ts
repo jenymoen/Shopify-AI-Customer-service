@@ -3,22 +3,50 @@ import db from "../db.server";
 import { findOrCreateCustomerByEmail, findOrCreateTicketFromEmail } from "../services/ticket.service.server";
 import { searchKnowledgeForTicket } from "../services/knowledge.service.server";
 
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  return new Response(JSON.stringify({ status: "ok", service: "Storefront Support API" }), {
-    headers: { "Content-Type": "application/json" },
+// Called from the merchant's storefront (any origin, incl. custom domains), so CORS is open.
+// The endpoint is unauthenticated and cookie-less; abuse is limited by validation + honeypot.
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
+const json = (data: unknown, status = 200) =>
+  new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
   });
+
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  return json({ status: "ok", service: "Storefront Support API" });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+
   try {
     const body = await request.json();
-    const { intent, shopDomain, email, subject, message, orderNumber } = body;
+    const { intent, shopDomain, email, name, subject, message, orderNumber, website } = body;
+
+    // Honeypot: real users never fill this hidden field. Pretend success to bots.
+    if (website) {
+      return json({ success: true });
+    }
 
     if (!shopDomain || !email || !subject) {
-      return new Response(JSON.stringify({ error: "Missing required fields: shopDomain, email, subject" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      });
+      return json({ error: "Missing required fields: shopDomain, email, subject" }, 400);
+    }
+
+    if (
+      typeof email !== "string" ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+      email.length > 254 ||
+      String(subject).length > 200 ||
+      String(message || "").length > 10000
+    ) {
+      return json({ error: "Invalid input" }, 400);
     }
 
     const shop = await db.shop.findFirst({
@@ -26,10 +54,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
 
     if (!shop) {
-      return new Response(JSON.stringify({ error: "Shop not found" }), {
-        status: 404,
-        headers: { "Content-Type": "application/json" },
-      });
+      return json({ error: "Shop not found" }, 404);
     }
 
     // Step 1: Self-Service AI Check Intent
@@ -41,29 +66,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       if (chunks.length > 0) {
-        return new Response(
-          JSON.stringify({
-            resolvedBySelfService: false,
-            suggestedSolution: chunks[0].content,
-            sourceTitle: chunks[0].title,
-          }),
-          { headers: { "Content-Type": "application/json" } }
-        );
+        return json({
+          resolvedBySelfService: false,
+          suggestedSolution: chunks[0].content,
+          sourceTitle: chunks[0].title,
+        });
       }
 
-      return new Response(
-        JSON.stringify({
-          resolvedBySelfService: false,
-          suggestedSolution: null,
-        }),
-        { headers: { "Content-Type": "application/json" } }
-      );
+      return json({ resolvedBySelfService: false, suggestedSolution: null });
     }
 
     // Step 2: Create Support Ticket
+    const [firstName, ...rest] = String(name || "").trim().split(/\s+/);
     const customer = await findOrCreateCustomerByEmail({
       shopId: shop.id,
       email,
+      firstName: firstName || null,
+      lastName: rest.join(" ") || null,
     });
 
     const fullSubject = orderNumber ? `[Order #${orderNumber}] ${subject}` : subject;
@@ -76,20 +95,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       source: "STOREFRONT",
     });
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        ticketNumber: ticket.ticketNumber,
-        ticketId: ticket.id,
-        message: "Support ticket created successfully. We will follow up via email shortly.",
-      }),
-      { headers: { "Content-Type": "application/json" } }
-    );
+    return json({
+      success: true,
+      ticketNumber: ticket.ticketNumber,
+      message: "Support ticket created successfully. We will follow up via email shortly.",
+    });
   } catch (err: any) {
     console.error("[storefront-support-api] Error:", err);
-    return new Response(JSON.stringify({ error: err.message || "Internal server error" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    return json({ error: "Internal server error" }, 500);
   }
 };
